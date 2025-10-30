@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "AI Commerce Agent (Sandbox)",
+  "version": "1.0.0",
+  "description": "商品ページを解析し、サンドボックスAIの推奨を表示する最小プロト",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*/*",
+        "http://*/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
