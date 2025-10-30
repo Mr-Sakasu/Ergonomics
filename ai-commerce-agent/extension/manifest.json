@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "AI Commerce Agent (Sandbox)",
+  "name": "E-commerce × AI ",
   "version": "1.0.0",
-  "description": "商品ページを解析し、サンドボックスAIの推奨を表示する最小プロト",
+  "description": "AI-Powered E-commerce",
   "permissions": [
     "storage",
     "activeTab",
