@@ -1,13 +1,185 @@
-# プライバシーポリシー
+<!DOCTYPE html>
+<html lang="ja">
 
-## データ収集
-本拡張機能は以下のデータをローカルに保存します：
-- ユーザーの言語設定
-- チャット履歴（ブラウザ内のみ）
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>プライバシーポリシー</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
 
-## データ共有
-- 収集したデータは第三者と共有されません
-- AIサービス（OpenAI等）には匿名化された質問のみ送信されます
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans JP", sans-serif;
+            line-height: 1.8;
+            color: #333;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 40px 20px;
+        }
 
-## お問い合わせ
-[Sakasu.no.01*gmail.com] *を@に変更してお問い合わせください。
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 60px 40px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1rem;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 50px 40px;
+        }
+
+        .section {
+            margin-bottom: 40px;
+        }
+
+        .section:last-child {
+            margin-bottom: 0;
+        }
+
+        .section h2 {
+            font-size: 1.5rem;
+            color: #667eea;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 3px solid #667eea;
+            display: inline-block;
+        }
+
+        .section ul {
+            list-style: none;
+            padding-left: 0;
+        }
+
+        .section li {
+            padding: 12px 0 12px 30px;
+            position: relative;
+            font-size: 1.05rem;
+        }
+
+        .section li::before {
+            content: "✓";
+            position: absolute;
+            left: 0;
+            color: #667eea;
+            font-weight: bold;
+            font-size: 1.2rem;
+        }
+
+        .section p {
+            font-size: 1.05rem;
+            margin-bottom: 10px;
+        }
+
+        .contact-box {
+            background: #f8f9ff;
+            border-left: 4px solid #667eea;
+            padding: 20px 25px;
+            border-radius: 8px;
+            margin-top: 15px;
+        }
+
+        .contact-box p {
+            margin: 0;
+            color: #555;
+        }
+
+        .email {
+            font-weight: 600;
+            color: #667eea;
+            font-size: 1.1rem;
+            margin-top: 8px;
+            display: inline-block;
+        }
+
+        .highlight {
+            background: linear-gradient(transparent 60%, #ffd70020 60%);
+            padding: 2px 4px;
+            font-weight: 500;
+        }
+
+        @media (max-width: 768px) {
+            body {
+                padding: 20px 10px;
+            }
+
+            .header {
+                padding: 40px 20px;
+            }
+
+            .header h1 {
+                font-size: 2rem;
+            }
+
+            .content {
+                padding: 30px 20px;
+            }
+
+            .section h2 {
+                font-size: 1.3rem;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>プライバシーポリシー</h1>
+            <p>Privacy Policy</p>
+        </div>
+
+        <div class="content">
+            <div class="section">
+                <h2>データ収集</h2>
+                <p>本拡張機能は以下のデータを<span class="highlight">ローカルに保存</span>します：</p>
+                <ul>
+                    <li>ユーザーの言語設定</li>
+                    <li>チャット履歴（ブラウザ内のみ）</li>
+                </ul>
+            </div>
+
+            <div class="section">
+                <h2>データ共有</h2>
+                <ul>
+                    <li>収集したデータは<span class="highlight">第三者と共有されません</span></li>
+                    <li>AIサービス（OpenAI等）には匿名化された質問のみ送信されます</li>
+                </ul>
+            </div>
+
+            <div class="section">
+                <h2>お問い合わせ</h2>
+                <div class="contact-box">
+                    <p>ご質問やご不明な点がございましたら、以下のメールアドレスまでお気軽にお問い合わせください。</p>
+                    <p class="email">Sakasu.no.01@gmail.com</p>
+                    <p style="font-size: 0.9rem; color: #888; margin-top: 10px;">※メールアドレスの「*」を「@」に変更してご連絡ください</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>

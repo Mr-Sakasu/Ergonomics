@@ -7,7 +7,7 @@ const USER_LANG = (navigator.language || 'en-US').toLowerCase();
 // ---- i18n ----
 function t(key) {
   const JA = {
-    welcome: '欲しいものを送ってください。例）「ノートPC 4万円台 軽い」「北京で食事」「2000元以内のスマホ」',
+    welcome: '欲しいものQを送ってください。例）「ノートPC 4万円台 軽い」「北京で食事」「2000元以内のスマホ」',
     placeholder: '商品や条件を入力...',
     voiceTitle: '音声で話す',
     sendTitle: '送信',
