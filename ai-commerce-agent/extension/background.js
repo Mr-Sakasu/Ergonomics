@@ -1,6 +1,6 @@
 // background.js - chat + legacy
 console.log('[AIC] BG loaded');
-const BASE_URL = 'http://localhost:8787';
+const BASE_URL = 'https://ergonomics-mu.vercel.app/';
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // 新チャット
