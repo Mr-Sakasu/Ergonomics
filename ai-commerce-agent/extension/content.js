@@ -1,8 +1,9 @@
 // extension/content.js
-console.log('[AIC] content v1.5 loaded');
+console.log('[AIC] content v1.6 loaded');
 
 const USER_LANG = (navigator.language || 'en-US').toLowerCase();
 
+// ---- i18n ----
 function t(key) {
   const JA = {
     welcome: '欲しいものQを送ってください。例）「ノートPC 4万円台 軽い」「北京で食事」「2000元以内のスマホ」',
@@ -56,6 +57,7 @@ function t(key) {
   return L[key];
 }
 
+// ---- layout ----
 const PANEL_WIDTH = 320;
 const PANEL_HEIGHT = 420;
 
@@ -114,21 +116,22 @@ const sendBtn = panel.querySelector('#aic-send');
 const voiceBtn = panel.querySelector('#aic-voice');
 const minimizeBtn = panel.querySelector('#aic-minimize');
 
-// スクロールをページに伝播させない
+// ====== scroll trap (パネル内だけスクロール) ======
 msgBox.addEventListener('wheel', e => {
   const el = msgBox;
   const delta = e.deltaY;
   const atTop = el.scrollTop === 0;
   const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 1;
-  if ((delta < 0 && atTop) || (delta > 0 && atBottom)) return;
+  if ((delta < 0 && atTop) || (delta > 0 && atBottom)) {
+    // このときはページ側に流してよい
+    return;
+  }
   e.preventDefault();
   e.stopPropagation();
   el.scrollTop += delta;
 }, { passive: false });
 
-// 初回メッセージ
-addBotText(t('welcome'));
-
+// ====== message helpers ======
 function addUserBubble(text) {
   const div = document.createElement('div');
   div.style.alignSelf = 'flex-end';
@@ -164,7 +167,7 @@ function addProductCards(items = []) {
   wrap.style.display = 'flex';
   wrap.style.flexDirection = 'column';
   wrap.style.gap = '6px';
-  wrap.style.alignSelf = 'stretch';      // ← 全幅
+  wrap.style.alignSelf = 'stretch';
   wrap.style.width = '100%';
 
   items.forEach(it => {
@@ -179,7 +182,6 @@ function addProductCards(items = []) {
     card.style.boxSizing = 'border-box';
     card.style.alignItems = 'center';
 
-    // 画像またはプレースホルダ
     const thumb = document.createElement('div');
     thumb.style.width = '56px';
     thumb.style.height = '56px';
@@ -224,6 +226,10 @@ function addProductCards(items = []) {
   msgBox.scrollTop = msgBox.scrollHeight;
 }
 
+// 初回メッセージ
+addBotText(t('welcome'));
+
+// ====== send ======
 function sendMessage() {
   const text = inputEl.value.trim();
   if (!text) return;
@@ -242,7 +248,10 @@ function sendMessage() {
       }
     },
     resp => {
-      if (loading && loading.remove) loading.remove();
+      // loading 消す（念のため parentNode check）
+      if (loading && loading.parentNode) {
+        loading.parentNode.removeChild(loading);
+      }
 
       if (!resp || !resp.ok) return addBotText(t('errServer'));
       const data = resp.data;
@@ -256,14 +265,108 @@ function sendMessage() {
   );
 }
 
-sendBtn.onclick = sendMessage;
+sendBtn.addEventListener('click', sendMessage);
 inputEl.addEventListener('keydown', e => {
   if (e.key === 'Enter') sendMessage();
 });
 
-// （音声の部分は前のを戻してください）
+// ====== voice (安全版) ======
+function showListening() {
+  try {
+    addBotText(t('listening'));
+  } catch (e) {
+    console.warn('[AIC] failed to show listening', e);
+  }
+}
 
-// 最小化
+async function startVoiceCapture() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    addBotText(t('voiceNA'));
+    return;
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const rec = new MediaRecorder(stream);
+    const chunks = [];
+    rec.ondataavailable = e => chunks.push(e.data);
+    rec.start();
+
+    // 3.5秒録音
+    await new Promise(r => setTimeout(r, 3500));
+    rec.stop();
+    await new Promise(r => rec.onstop = r);
+    stream.getTracks().forEach(tr => tr.stop());
+
+    const blob = new Blob(chunks, { type: 'audio/webm' });
+
+    // Blob → base64
+    const audioBase64 = await new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => {
+        const dataUrl = fr.result || '';
+        resolve(String(dataUrl).split(',')[1] || '');
+      };
+      fr.onerror = reject;
+      fr.readAsDataURL(blob);
+    });
+
+    if (!audioBase64) {
+      addBotText(t('voiceErr'));
+      return;
+    }
+
+    // STT に送る
+    const sttResp = await fetch('https://ergonomics-mu.vercel.app/api/stt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ audioBase64, mimeType: blob.type || 'audio/webm' })
+    });
+    const stt = await sttResp.json().catch(() => null);
+    if (!stt || !stt.ok || !stt.text) {
+      addBotText(t('voiceErr'));
+      return;
+    }
+
+    // 認識結果を画面にも出す
+    inputEl.value = stt.text;
+    addUserBubble(stt.text);
+
+    // 文字起こし結果をそのままチャットへ
+    chrome.runtime.sendMessage(
+      {
+        type: 'AI_CHAT',
+        payload: {
+          text: stt.text,
+          lang: stt.lang || (navigator.language || 'en-US'),
+          siteHost: location.hostname || ''
+        }
+      },
+      resp => {
+        if (!resp || !resp.ok) return addBotText(t('errServer'));
+        const data = resp.data;
+        if (!data || !Array.isArray(data.messages)) return addBotText(t('errFormat'));
+
+        data.messages.forEach(m => {
+          if (m.type === 'text') addBotText(m.content);
+          if (m.type === 'products') addProductCards(m.items);
+        });
+      }
+    );
+  } catch (err) {
+    console.error('[AIC voice] error', err);
+    addBotText(t('voiceErr'));
+  }
+}
+
+voiceBtn.addEventListener('click', () => {
+  // ここは絶対動く
+  showListening();
+  // こっちは非同期で録音
+  startVoiceCapture();
+});
+
+// ====== minimize ======
 let minimized = false;
 minimizeBtn.onclick = () => {
   minimized = !minimized;
