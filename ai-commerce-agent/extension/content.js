@@ -1,5 +1,5 @@
 // extension/content.js
-console.log('[AIC] content v1.6 loaded');
+console.log('[AIC] content v1.7 loaded');
 
 const USER_LANG = (navigator.language || 'en-US').toLowerCase();
 
@@ -55,6 +55,29 @@ function t(key) {
   };
   const L = USER_LANG.startsWith('ja') ? JA : USER_LANG.startsWith('zh') ? ZH : EN;
   return L[key];
+}
+
+// ★ 入力テキストから簡易に言語を推定
+function detectInputLangLocal(str) {
+  if (!str) return 'en';
+  // ひらがな・カタカナ・漢字が多ければ日本語
+  if (/[ぁ-んァ-ン一-龥]/.test(str)) return 'ja';
+  // 簡体字/繁体字っぽいなら中国語
+  if (/[\u4E00-\u9FFF\u3400-\u4DBF\uF900-\uFAFF]/.test(str)) return 'zh';
+  // 韓国語
+  if (/[\uac00-\ud7af]/.test(str)) return 'ko';
+  // ラテンだけなら英語に寄せる
+  return 'en';
+}
+
+// 入力言語別の “検索中…” 文言
+function searchingTextByInput(str) {
+  const lang = detectInputLangLocal(str);
+  if (lang === 'ja') return '🔎 検索中です…';
+  if (lang === 'zh') return '🔎 正在为你查找…';
+  if (lang === 'ko') return '🔎 검색 중입니다…';
+  // ポルトガル語とかロシア語は英語にフォールバックでOK（要ならここに足せる）
+  return '🔎 Searching…';
 }
 
 // ---- layout ----
@@ -116,22 +139,21 @@ const sendBtn = panel.querySelector('#aic-send');
 const voiceBtn = panel.querySelector('#aic-voice');
 const minimizeBtn = panel.querySelector('#aic-minimize');
 
-// ====== scroll trap (パネル内だけスクロール) ======
+// パネル内だけスクロール
 msgBox.addEventListener('wheel', e => {
   const el = msgBox;
   const delta = e.deltaY;
   const atTop = el.scrollTop === 0;
   const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 1;
-  if ((delta < 0 && atTop) || (delta > 0 && atBottom)) {
-    // このときはページ側に流してよい
-    return;
-  }
+  if ((delta < 0 && atTop) || (delta > 0 && atBottom)) return;
   e.preventDefault();
   e.stopPropagation();
   el.scrollTop += delta;
 }, { passive: false });
 
-// ====== message helpers ======
+// 初回メッセージ
+addBotText(t('welcome'));
+
 function addUserBubble(text) {
   const div = document.createElement('div');
   div.style.alignSelf = 'flex-end';
@@ -226,9 +248,6 @@ function addProductCards(items = []) {
   msgBox.scrollTop = msgBox.scrollHeight;
 }
 
-// 初回メッセージ
-addBotText(t('welcome'));
-
 // ====== send ======
 function sendMessage() {
   const text = inputEl.value.trim();
@@ -236,7 +255,8 @@ function sendMessage() {
   addUserBubble(text);
   inputEl.value = '';
 
-  const loading = addBotText(t('searching'));
+  // ★ 入力言語に合わせた「検索中…」
+  const loading = addBotText(searchingTextByInput(text));
 
   chrome.runtime.sendMessage(
     {
@@ -248,10 +268,7 @@ function sendMessage() {
       }
     },
     resp => {
-      // loading 消す（念のため parentNode check）
-      if (loading && loading.parentNode) {
-        loading.parentNode.removeChild(loading);
-      }
+      if (loading && loading.parentNode) loading.parentNode.removeChild(loading);
 
       if (!resp || !resp.ok) return addBotText(t('errServer'));
       const data = resp.data;
@@ -291,8 +308,6 @@ async function startVoiceCapture() {
     const chunks = [];
     rec.ondataavailable = e => chunks.push(e.data);
     rec.start();
-
-    // 3.5秒録音
     await new Promise(r => setTimeout(r, 3500));
     rec.stop();
     await new Promise(r => rec.onstop = r);
@@ -300,7 +315,6 @@ async function startVoiceCapture() {
 
     const blob = new Blob(chunks, { type: 'audio/webm' });
 
-    // Blob → base64
     const audioBase64 = await new Promise((resolve, reject) => {
       const fr = new FileReader();
       fr.onload = () => {
@@ -316,7 +330,6 @@ async function startVoiceCapture() {
       return;
     }
 
-    // STT に送る
     const sttResp = await fetch('https://ergonomics-mu.vercel.app/api/stt', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -328,11 +341,12 @@ async function startVoiceCapture() {
       return;
     }
 
-    // 認識結果を画面にも出す
     inputEl.value = stt.text;
     addUserBubble(stt.text);
 
-    // 文字起こし結果をそのままチャットへ
+    // 音声でも「検索中…」を入力言語で出す
+    const loading = addBotText(searchingTextByInput(stt.text));
+
     chrome.runtime.sendMessage(
       {
         type: 'AI_CHAT',
@@ -343,6 +357,8 @@ async function startVoiceCapture() {
         }
       },
       resp => {
+        if (loading && loading.parentNode) loading.parentNode.removeChild(loading);
+
         if (!resp || !resp.ok) return addBotText(t('errServer'));
         const data = resp.data;
         if (!data || !Array.isArray(data.messages)) return addBotText(t('errFormat'));
@@ -360,9 +376,7 @@ async function startVoiceCapture() {
 }
 
 voiceBtn.addEventListener('click', () => {
-  // ここは絶対動く
   showListening();
-  // こっちは非同期で録音
   startVoiceCapture();
 });
 
