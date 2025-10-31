@@ -1,10 +1,9 @@
 // extension/content.js
 // AI Commerce Bot – top-right fixed, auto-lang + i18n
-console.log('[AIC] content v1.3 loaded');
+console.log('[AIC] content v1.4 loaded');
 
 const USER_LANG = (navigator.language || 'en-US').toLowerCase();
 
-// ---- i18n ----
 function t(key) {
   const JA = {
     welcome: '欲しいものQを送ってください。例）「ノートPC 4万円台 軽い」「北京で食事」「2000元以内のスマホ」',
@@ -19,7 +18,8 @@ function t(key) {
     listening: '🎤 聞いています...',
     voiceErr: '音声入力に失敗しました。',
     minimize: '最小化',
-    restore: '復元'
+    restore: '復元',
+    searching: '🔎 検索中です…'
   };
   const ZH = {
     welcome: '说一下你要买/要找的东西。例如：「约4000的轻薄本」「北京吃饭」「2000元以内的手机」。',
@@ -34,7 +34,8 @@ function t(key) {
     listening: '🎤 正在聆听…',
     voiceErr: '语音输入失败。',
     minimize: '最小化',
-    restore: '还原'
+    restore: '还原',
+    searching: '🔎 正在为你查找…'
   };
   const EN = {
     welcome: 'Tell me what you want. e.g. “lightweight laptop around $400”, “restaurant in Beijing”, “phone under 2000 CNY”.',
@@ -49,13 +50,13 @@ function t(key) {
     listening: '🎤 Listening...',
     voiceErr: 'Voice input failed.',
     minimize: 'Minimize',
-    restore: 'Restore'
+    restore: 'Restore',
+    searching: '🔎 Searching…'
   };
   const L = USER_LANG.startsWith('ja') ? JA : USER_LANG.startsWith('zh') ? ZH : EN;
   return L[key];
 }
 
-// ---- layout ----
 const PANEL_WIDTH = 320;
 const PANEL_HEIGHT = 420;
 
@@ -86,7 +87,12 @@ panel.innerHTML = `
       cursor:pointer; opacity:.55;
     " title="${t('minimize')}">–</button>
   </div>
-  <div id="aic-messages" style="flex:1; min-height:0; overflow-y: scroll; padding:10px; display:flex; flex-direction:column; gap:6px; overflow-y:auto;"></div>
+  <div id="aic-messages" style="
+    flex:1; min-height:0;
+    overflow-y:auto;
+    overscroll-behavior:contain;
+    padding:10px; display:flex; flex-direction:column; gap:6px;
+  "></div>
   <div style="display:flex; gap:6px; padding:8px 10px; border-top:1px solid rgba(255,255,255,.05); background:#0f172a;">
     <input id="aic-input" placeholder="${t('placeholder')}" autocomplete="off" style="
       flex:1; background:#0f172a; border:1px solid rgba(255,255,255,.03);
@@ -109,10 +115,28 @@ const sendBtn = panel.querySelector('#aic-send');
 const voiceBtn = panel.querySelector('#aic-voice');
 const minimizeBtn = panel.querySelector('#aic-minimize');
 
+// scrollバブルを外に伝播させない
+msgBox.addEventListener(
+  'wheel',
+  (e) => {
+    const el = msgBox;
+    const delta = e.deltaY;
+    const atTop = el.scrollTop === 0;
+    const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 1;
+    if ((delta < 0 && atTop) || (delta > 0 && atBottom)) {
+      // 外に流してOK
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    el.scrollTop += delta;
+  },
+  { passive: false }
+);
+
 // 初回メッセージ
 addBotText(t('welcome'));
 
-// ---- UI helpers ----
 function addUserBubble(text) {
   const div = document.createElement('div');
   div.style.alignSelf = 'flex-end';
@@ -125,6 +149,7 @@ function addUserBubble(text) {
   div.textContent = text;
   msgBox.appendChild(div);
   msgBox.scrollTop = msgBox.scrollHeight;
+  return div;
 }
 
 function addBotText(text) {
@@ -139,6 +164,7 @@ function addBotText(text) {
   div.textContent = text;
   msgBox.appendChild(div);
   msgBox.scrollTop = msgBox.scrollHeight;
+  return div; // これで後で消せる
 }
 
 function addProductCards(items = []) {
@@ -169,7 +195,7 @@ function addProductCards(items = []) {
 
     const priceText = it.price
       ? (/^[¥￥$]/.test(String(it.price)) ? String(it.price) : `¥${it.price}`)
-      : (typeof t === 'function' ? t('priceUnknown') : 'Price unknown');
+      : t('priceUnknown');
 
     const info = document.createElement('div');
     info.innerHTML = `
@@ -187,20 +213,19 @@ function addProductCards(items = []) {
 
   msgBox.appendChild(wrap);
   msgBox.scrollTop = msgBox.scrollHeight;
+  return wrap;
 }
 
-
-
-// ---- send ----
 function sendMessage() {
   const text = inputEl.value.trim();
   if (!text) return;
   addUserBubble(text);
   inputEl.value = '';
 
-  const siteHost = location.hostname || '';
+  // 「検索中…」を出す
+  const loading = addBotText(t('searching'));
 
-chrome.runtime.sendMessage(
+  chrome.runtime.sendMessage(
     {
       type: 'AI_CHAT',
       payload: {
@@ -210,17 +235,17 @@ chrome.runtime.sendMessage(
       }
     },
     resp => {
+      // 検索中を消す
+      if (loading && loading.remove) loading.remove();
+
       if (!resp || !resp.ok) return addBotText(t('errServer'));
       const data = resp.data;
       if (!data || !Array.isArray(data.messages)) return addBotText(t('errFormat'));
+
       data.messages.forEach(m => {
         if (m.type === 'text') addBotText(m.content);
-        if (m.type === 'products') addProductCards(m.items);   // 下の更新版で価格&画像対応
+        if (m.type === 'products') addProductCards(m.items);
       });
-      div.textContent = text;
-      msgBox.appendChild(div);
-      msgBox.scrollTop = msgBox.scrollHeight;
-      return div;            // ← これだけ
     }
   );
 }
