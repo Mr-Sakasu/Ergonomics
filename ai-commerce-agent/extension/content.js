@@ -189,7 +189,6 @@ sendBtn.onclick = sendMessage;
 inputEl.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
 
 // ---- voice ----
-// 音声を録って /api/stt に丸投げして、返ってきた text/lang を /chatbot に送る
 voiceBtn.onclick = async () => {
   if (!navigator.mediaDevices?.getUserMedia) { addBotText(t('voiceNA')); return; }
   addBotText(t('listening'));
@@ -200,22 +199,37 @@ voiceBtn.onclick = async () => {
   rec.ondataavailable = e => chunks.push(e.data);
   rec.start();
 
-  // 3～5秒だけ録音（好みで調整）
+  // 3.5秒だけ録音（必要に応じて調整）
   await new Promise(r => setTimeout(r, 3500));
   rec.stop();
   await new Promise(r => rec.onstop = r);
   stream.getTracks().forEach(tr => tr.stop());
 
   const blob = new Blob(chunks, { type: 'audio/webm' });
-  const fd = new FormData();
-  fd.set('audio', blob, 'voice.webm');
 
-  // VercelのSTTへ
-  const sttResp = await fetch('https://ergonomics-mu.vercel.app/api/stt', { method: 'POST', body: fd });
+  // Blob -> base64（安全で簡単）
+  const audioBase64 = await new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => {
+      const dataUrl = fr.result;                 // "data:audio/webm;base64,AAA..."
+      resolve(String(dataUrl).split(',')[1] || '');
+    };
+    fr.onerror = reject;
+    fr.readAsDataURL(blob);
+  });
+
+  if (!audioBase64) { addBotText(t('voiceErr')); return; }
+
+  // Vercelの /api/stt に送る（JSON）
+  const sttResp = await fetch('https://ergonomics-mu.vercel.app/api/stt', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ audioBase64, mimeType: blob.type || 'audio/webm' })
+  });
   const stt = await sttResp.json();
   if (!stt.ok || !stt.text) { addBotText(t('voiceErr')); return; }
 
-  // 文字起こし結果を即送信
+  // 文字起こし結果をそのまま送信
   inputEl.value = stt.text;
   addUserBubble(stt.text);
   chrome.runtime.sendMessage(
