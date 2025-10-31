@@ -2,7 +2,7 @@
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_API_BASE = process.env.OPENAI_API_BASE || "https://api.openai.com";
 
-// ========== small utils ==========
+// ================== common utils ==================
 async function readJson(req) {
     let body = "";
     for await (const chunk of req) body += chunk;
@@ -40,30 +40,41 @@ function buildSiteSearchUrl(host, q) {
     return `https://${host}/search?q=${enc}`;
 }
 
-// ========== ★ あなたの /api/lang-detect を使う ==========
+// ================== 1. use /api/lang-detect ==================
 async function detectTextLangViaApi(text, req) {
-    // 同じ Vercel / 同じホストで動いている想定
+    // 1) Vercelなら VERCEL_URL
+    // 2) それ以外ならリクエストヘッダ
+    // 3) どっちも取れなかったら同じホストを想定できないので英語にフォールバック
     const base =
         (process.env.VERCEL_URL && `https://${process.env.VERCEL_URL}`) ||
         (req?.headers?.host && `https://${req.headers.host}`) ||
         "";
+
+    if (!base) {
+        // base URL を決められないときはそのまま英語
+        return "en";
+    }
+
     try {
         const r = await fetch(`${base}/api/lang-detect`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ text })
         });
-        const j = await r.json();
-        if (j?.ok && j.lang_code) return j.lang_code;
+        const j = await r.json().catch(() => null);
+        if (j?.ok && j.lang_code) {
+            return j.lang_code;
+        }
     } catch (e) {
         console.error("[chatbot] lang-detect api failed", e);
     }
     return "en";
 }
 
-// ========== 2. UI strings ==========
+// ================== 2. UI strings ==================
 function getUiStringsSync(langCode) {
-    if (langCode.startsWith("ja")) {
+    const lc = (langCode || "").toLowerCase();
+    if (lc.startsWith("ja")) {
         return {
             found: "以下が見つかりました。",
             other: "このサイトでは見つかりませんでしたが、他のところから候補を出します。",
@@ -71,7 +82,7 @@ function getUiStringsSync(langCode) {
             refine: "価格帯・ブランド・用途を言ってくれればさらに絞れます。"
         };
     }
-    if (langCode.startsWith("zh")) {
+    if (lc.startsWith("zh")) {
         return {
             found: "找到了以下商品。",
             other: "当前站点没找到，我从其他平台给你找了一些。",
@@ -79,7 +90,7 @@ function getUiStringsSync(langCode) {
             refine: "说下预算/品牌/用途，我可以再筛选。"
         };
     }
-    if (langCode.startsWith("en")) {
+    if (lc.startsWith("en")) {
         return {
             found: "Here are the products I found.",
             other: "Not found on this site, but here are options from other sources.",
@@ -87,7 +98,7 @@ function getUiStringsSync(langCode) {
             refine: "Tell me budget/brand/use case to refine."
         };
     }
-    // fallback
+    // fallback: unknown language → 英語
     return {
         found: "Here are the products I found.",
         other: "Not found on this site, but here are options from other sources.",
@@ -96,15 +107,16 @@ function getUiStringsSync(langCode) {
     };
 }
 
-// ========== 3. site-search-lang ==========
+// ================== 3. site search lang ==================
 function detectSiteSearchLang(host = "", userLang = "en") {
     const h = host.toLowerCase();
+    // JDのときだけ中国語を最初に試す (API側もそうなってるはずなので)
     if (h.includes("jd.com")) return "zh-CN";
-    // ★ ここを “ユーザー優先” にする
+    // それ以外はユーザーが話している言語でまず探す
     return userLang;
 }
 
-// ========== 4. LLMでコア＋価格を作る ==========
+// ================== 4. LLM: short_query + price + base queries ==================
 async function generateMultiQueries(userText, userLang, siteLang, siteHost = "") {
     const system = `
 You are an e-commerce query generator.
@@ -158,7 +170,7 @@ Site host: ${siteHost || "(none)"}
     };
 }
 
-// ========== ★ 言語依存で価格つきクエリを作る ==========
+// ================== 5. price-aware query expansions ==================
 function priceQueryVariants(shortQuery, amount, cur, operator, langCode) {
     const lang = (langCode || "en").toLowerCase();
     const res = [];
@@ -211,7 +223,7 @@ function priceQueryVariants(shortQuery, amount, cur, operator, langCode) {
         if (!operator || operator === "<=") {
             res.push({ q: `${shortQuery} até ${amount} ${cur}`, lang: "pt" });
         } else {
-            res.push({ q: `${shortQuery} cerca de ${amount} ${cur}`, lang: "pt" });
+            res.push({ q: `${shortQuery} perto de ${amount} ${cur}`, lang: "pt" });
         }
         return res;
     }
@@ -226,7 +238,7 @@ function priceQueryVariants(shortQuery, amount, cur, operator, langCode) {
         return res;
     }
 
-    // デフォルトは英語
+    // デフォルト: 英語
     if (!operator || operator === "<=") {
         res.push({ q: `${shortQuery} under ${amount} ${cur}`, lang: "en-US" });
         res.push({ q: `${shortQuery} ${amount} ${cur}`, lang: "en-US" });
@@ -250,18 +262,18 @@ function expandQueriesWithPrice(baseQueries, shortQuery, priceObj, siteLang, use
 
     const extras = [];
 
-    // ① 今いるサイトの言語で
+    // 1. 今のサイトの言語
     extras.push(...priceQueryVariants(shortQuery, amount, cur, operator, siteLang));
 
-    // ② ユーザーの言語が違えばユーザーの言語でも
+    // 2. ユーザーの言語がサイトと違えばユーザーの言語でも
     if (!userLang.toLowerCase().startsWith(siteLang.toLowerCase().slice(0, 2))) {
         extras.push(...priceQueryVariants(shortQuery, amount, cur, operator, userLang));
     }
 
-    // ③ 最後に英語を保険で
+    // 3. 最後に英語を保険で
     extras.push(...priceQueryVariants(shortQuery, amount, cur, operator, "en-US"));
 
-    // マージ
+    // 重複除去
     const seen = new Set();
     const out = [];
     for (const it of [...extras, ...baseQueries]) {
@@ -275,29 +287,37 @@ function expandQueriesWithPrice(baseQueries, shortQuery, priceObj, siteLang, use
     return out;
 }
 
-// ========== main ==========
+// ================== main handler ==================
 module.exports = async (req, res) => {
     // CORS
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-    if (req.method === "OPTIONS") return res.status(200).end();
-    if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
+
+    if (req.method === "OPTIONS") {
+        return res.status(200).end();
+    }
+
+    if (req.method !== "POST") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+    }
 
     try {
         const { text = "", lang = "en-US", siteHost = "" } = await readJson(req);
 
-        // ★ 1) ここであなたの lang-detect を使う
-        const userLang = await detectTextLangViaApi(text, req) || lang;
+        // 1) ユーザーが今しゃべってる言語を /api/lang-detect で確定
+        const userLang = (await detectTextLangViaApi(text, req)) || lang;
 
+        // 2) その言語でUIを決める
         const ui = getUiStringsSync(userLang);
 
+        // 3) サイト側で最初に試す言語
         const siteLang = detectSiteSearchLang(siteHost, userLang);
 
-        // 2) LLMでshort_queryとpriceとベースクエリをとる
+        // 4) LLMでクエリと価格を分解
         const qgen = await generateMultiQueries(text, userLang, siteLang, siteHost);
 
-        // 3) 価格つきクエリをユーザー＆サイトの言語で増やす
+        // 5) 価格に応じた多言語クエリを足す
         const queries = expandQueriesWithPrice(
             qgen.queries || [],
             qgen.short_query,
@@ -311,7 +331,7 @@ module.exports = async (req, res) => {
         let foundItems = [];
         let foundFrom = "";
 
-        // 4) まず今のサイトで全部試す
+        // 6) まず今いるサイトでぜんぶ試す
         if (siteHost) {
             for (const { q, lang: qlang } of queries) {
                 try {
@@ -330,11 +350,13 @@ module.exports = async (req, res) => {
                         foundFrom = "site";
                         break;
                     }
-                } catch { }
+                } catch (e) {
+                    // 次のクエリへ
+                }
             }
         }
 
-        // 5) サイトでゼロならグローバル
+        // 7) サイトで1つも出なかったら、siteHostなしで同じクエリを回す
         if (foundItems.length === 0) {
             for (const { q, lang: qlang } of queries) {
                 try {
@@ -353,12 +375,15 @@ module.exports = async (req, res) => {
                         foundFrom = "global";
                         break;
                     }
-                } catch { }
+                } catch (e) {
+                    // 次へ
+                }
             }
         }
 
-        // 6) それでもダメなら「サイトで検索して」カード＋notFound
+        // 8) レスポンスを組む
         const messages = [];
+
         if (foundItems.length > 0) {
             messages.push({
                 role: "assistant",
@@ -376,11 +401,13 @@ module.exports = async (req, res) => {
                 content: ui.refine
             });
         } else {
+            // ほんとに何も出なかったとき
             messages.push({
                 role: "assistant",
                 type: "text",
                 content: ui.notFound
             });
+
             if (siteHost && isEcomHost(siteHost)) {
                 messages.push({
                     role: "assistant",
@@ -400,6 +427,7 @@ module.exports = async (req, res) => {
                     ]
                 });
             }
+
             messages.push({
                 role: "assistant",
                 type: "text",
@@ -412,6 +440,7 @@ module.exports = async (req, res) => {
             reply_lang: userLang,
             messages
         });
+
     } catch (e) {
         console.error("[chatbot] error", e);
         return res.status(200).json({ ok: false, error: String(e) });
