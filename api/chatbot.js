@@ -124,21 +124,8 @@ Return EXACT JSON like: {"lang_code":"ja"} or {"lang_code":"zh"} or {"lang_code"
 // =====================================================
 function detectSiteSearchLang(host = "", uiLang = "en-US") {
     const h = host.toLowerCase();
-
     // JDは中国語に寄せる
     if (h.includes("jd.com")) return "zh-CN";
-
-    // 日本のECは日本語でヒットしやすいので日本語に
-    if (
-        h.includes("amazon.co.jp") ||
-        h.includes("rakuten.co.jp") ||
-        h.includes("rakuten.jp") ||
-        h.includes("shopping.yahoo.co.jp") ||
-        h.includes("yahoo.co.jp")
-    ) {
-        return "ja-JP";
-    }
-
     // それ以外はユーザーの言語で検索
     return uiLang;
 }
