@@ -189,22 +189,49 @@ sendBtn.onclick = sendMessage;
 inputEl.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
 
 // ---- voice ----
-voiceBtn.onclick = () => {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) return addBotText(t('voiceNA'));
-  const rec = new SR();
-  rec.lang = navigator.language || 'en-US';
-  rec.interimResults = false;
-  rec.maxAlternatives = 1;
-  rec.start();
+// 音声を録って /api/stt に丸投げして、返ってきた text/lang を /chatbot に送る
+voiceBtn.onclick = async () => {
+  if (!navigator.mediaDevices?.getUserMedia) { addBotText(t('voiceNA')); return; }
   addBotText(t('listening'));
-  rec.onresult = evt => {
-    const said = evt.results[0][0].transcript;
-    inputEl.value = said;
-    sendMessage();
-  };
-  rec.onerror = () => addBotText(t('voiceErr'));
+
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const rec = new MediaRecorder(stream);
+  const chunks = [];
+  rec.ondataavailable = e => chunks.push(e.data);
+  rec.start();
+
+  // 3～5秒だけ録音（好みで調整）
+  await new Promise(r => setTimeout(r, 3500));
+  rec.stop();
+  await new Promise(r => rec.onstop = r);
+  stream.getTracks().forEach(tr => tr.stop());
+
+  const blob = new Blob(chunks, { type: 'audio/webm' });
+  const fd = new FormData();
+  fd.set('audio', blob, 'voice.webm');
+
+  // VercelのSTTへ
+  const sttResp = await fetch('https://ergonomics-mu.vercel.app/api/stt', { method: 'POST', body: fd });
+  const stt = await sttResp.json();
+  if (!stt.ok || !stt.text) { addBotText(t('voiceErr')); return; }
+
+  // 文字起こし結果を即送信
+  inputEl.value = stt.text;
+  addUserBubble(stt.text);
+  chrome.runtime.sendMessage(
+    { type: 'AI_CHAT', payload: { text: stt.text, lang: stt.lang || (navigator.language || 'en-US'), provider: 'jd' } },
+    resp => {
+      if (!resp || !resp.ok) return addBotText(t('errServer'));
+      const data = resp.data;
+      if (!data || !Array.isArray(data.messages)) return addBotText(t('errFormat'));
+      data.messages.forEach(m => {
+        if (m.type === 'text') addBotText(m.content);
+        if (m.type === 'products') addProductCards(m.items);
+      });
+    }
+  );
 };
+
 
 // ---- minimize ----
 let minimized = false;
