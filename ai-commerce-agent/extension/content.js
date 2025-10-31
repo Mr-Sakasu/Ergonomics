@@ -217,6 +217,10 @@ chrome.runtime.sendMessage(
         if (m.type === 'text') addBotText(m.content);
         if (m.type === 'products') addProductCards(m.items);   // 下の更新版で価格&画像対応
       });
+      div.textContent = text;
+      msgBox.appendChild(div);
+      msgBox.scrollTop = msgBox.scrollHeight;
+      return div;            // ← これだけ
     }
   );
 }
