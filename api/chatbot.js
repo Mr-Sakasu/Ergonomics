@@ -2,9 +2,7 @@
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_API_BASE = process.env.OPENAI_API_BASE || "https://api.openai.com";
 
-// =====================================================
-// 基本ヘルパ
-// =====================================================
+// ========== util ==========
 async function readJson(req) {
     let body = "";
     for await (const chunk of req) body += chunk;
@@ -22,7 +20,6 @@ async function fetchWithTimeout(url, opt = {}, ms = 5000) {
     }
 }
 
-// EC判定
 function isEcomHost(host = "") {
     const h = host.toLowerCase();
     return (
@@ -35,7 +32,6 @@ function isEcomHost(host = "") {
     );
 }
 
-// ECサイトでの検索URL（APIなし想定）
 function buildSiteSearchUrl(host, query) {
     const h = host.toLowerCase();
     const q = encodeURIComponent(query);
@@ -45,20 +41,12 @@ function buildSiteSearchUrl(host, query) {
     return `https://${host}/search?q=${q}`;
 }
 
-// =====================================================
-// 1) 入力テキストの言語を「グローバルに」判定
-//    → ja / zh / en 以外でも OK にする
-//    ここでは ISO 639-1 か BCP47 っぽいのを返させる
-// =====================================================
+// ========== 1. 入力言語をグローバルに判定 ==========
 async function detectTextLangGlobal(text, fallback = "en") {
     const system = `
 You are a language detector.
-- Detect the main language of the user's text.
-- Return EXACT JSON.
-- Support ANY language (Thai "th", Portuguese "pt", Russian "ru", Arabic "ar", Spanish "es", French "fr", etc.)
-- If unsure, pick the closest.
-Schema:
-{"lang_code":"<iso-like code>"}
+Return ONLY JSON like {"lang_code":"xx"}.
+Support ANY language (en, ja, zh, ko, th, ru, pt, es, fr, ar, de, ...).
 `;
     const resp = await fetch(`${OPENAI_API_BASE}/v1/chat/completions`, {
         method: "POST",
@@ -76,21 +64,14 @@ Schema:
         })
     });
     const j = await resp.json();
-    if (!resp.ok) {
-        return fallback;
-    }
+    if (!resp.ok) return fallback;
     let obj = {};
     try { obj = JSON.parse(j.choices?.[0]?.message?.content || "{}"); } catch { }
     return obj.lang_code || fallback;
 }
 
-// =====================================================
-// 2) UIメッセージをその言語で用意する
-//    - ja / zh / en はハードコード
-//    - それ以外は LLM に翻訳してもらう
-// =====================================================
+// ========== 2. UIテキストをその言語で用意する ==========
 async function getUiStrings(langCode) {
-    // まず3言語だけ手持ち
     if (langCode.startsWith("ja")) {
         return {
             found: "以下が見つかりました。",
@@ -116,22 +97,15 @@ async function getUiStrings(langCode) {
         };
     }
 
-    // それ以外 → LLMに翻訳してもらう
+    // その他の言語はLLMで翻訳
     const system = `
 You are a translation helper.
-Translate the following 4 UI texts for an e-commerce chatbot into the target language.
+Translate these 4 short UI texts into the target language.
 Return EXACT JSON:
-{
-  "found": "...",
-  "otherSite": "...",
-  "notFound": "...",
-  "refine": "..."
-}
-Keep the meaning the same, be short and natural.
+{"found":"...", "otherSite":"...", "notFound":"...", "refine":"..."}
 `;
     const user = `
 Target language: ${langCode}
-Texts:
 1) "Here are the products I found."
 2) "Not found on this site, but here are some from other sources."
 3) "I couldn’t find it this time. Please add more keywords or constraints."
@@ -154,7 +128,6 @@ Texts:
     });
     const j = await resp.json();
     if (!resp.ok) {
-        // 失敗したら英語に落とす
         return {
             found: "Here are the products I found.",
             otherSite: "Not found on this site, but here are some from other sources.",
@@ -164,7 +137,6 @@ Texts:
     }
     let obj = {};
     try { obj = JSON.parse(j.choices?.[0]?.message?.content || "{}"); } catch { }
-    // 欠けてるところは英語で補う
     return {
         found: obj.found || "Here are the products I found.",
         otherSite: obj.otherSite || "Not found on this site, but here are some from other sources.",
@@ -173,17 +145,10 @@ Texts:
     };
 }
 
-// =====================================================
-// 3) 検索に使う言語を「サイトに合わせて」決める
-//    - JD → zh-CN
-//    - 日本EC → ja-JP
-//    - その他 → ユーザーの言語（そのまま）
-// =====================================================
-function detectSiteSearchLang(host = "", userUiLang = "en") {
+// ========== 3. サイト向け検索言語を決める ==========
+function detectSiteSearchLang(host = "", userLang = "en") {
     const h = host.toLowerCase();
-
     if (h.includes("jd.com")) return "zh-CN";
-
     if (
         h.includes("amazon.co.jp") ||
         h.includes("rakuten.co.jp") ||
@@ -193,36 +158,26 @@ function detectSiteSearchLang(host = "", userUiLang = "en") {
     ) {
         return "ja-JP";
     }
-
-    // その他 → ユーザーが使った言語で探す
-    // (ロシア語で書いたなら ru, タイ語なら th で投げる)
-    return userUiLang;
+    return userLang; // それ以外はそのまま
 }
 
-// =====================================================
-// 4) クエリを複数本つくる（前のメッセージで説明したやつ）
-// =====================================================
-async function generateSearchQueries(userText, targetLang, siteHost = "") {
+// ========== 4. 商品の意図を抽出して、多言語クエリを生成する ==========
+// ここが今回の「弱い気がする」を直したところ
+async function extractIntentAndMakeQueries(userText, siteLang, userLang, siteHost = "") {
+    // 1回のLLMで「ブランド・カテゴリ・キーワード」を取って、そこから複数クエリを組み立てる
     const system = `
-You are an e-commerce query normalizer.
-Goal:
-- User may speak ANY language.
-- You must generate MULTIPLE search queries that are likely to hit on the target site.
-- Write queries in the target language if possible.
+You are a product intent extractor for e-commerce.
+Given any user text (any language), you must extract:
+- brand (if any, like "Lenovo", "Apple", "华为", "レノボ")
+- category (like "laptop", "notebook", "スマホ", "笔记本电脑")
+- extra_keywords: other important words (color, price range words, "gaming", "office", ...)
 Return EXACT JSON:
 {
-  "queries": ["q1", "q2", "q3", "q4"]
+  "brand": "string or empty",
+  "category": "string or empty",
+  "extra_keywords": ["...","..."]
 }
-Rules:
-- q1: best guess, specific
-- q2: brand + category (if there is brand)
-- q3: category only / brand only
-- q4: optional english or global form
-`;
-    const user = `
-Target language: ${targetLang}
-Site: ${siteHost || "(none)"}
-User text: ${userText}
+Do not explain.
 `;
     const resp = await fetch(`${OPENAI_API_BASE}/v1/chat/completions`, {
         method: "POST",
@@ -235,25 +190,86 @@ User text: ${userText}
             response_format: { type: "json_object" },
             messages: [
                 { role: "system", content: system },
-                { role: "user", content: user }
+                { role: "user", content: userText }
             ]
         })
     });
     const j = await resp.json();
-    if (!resp.ok) {
-        return [userText];
+    let brand = "";
+    let category = "";
+    let extra = [];
+    if (resp.ok) {
+        try {
+            const obj = JSON.parse(j.choices?.[0]?.message?.content || "{}");
+            brand = (obj.brand || "").trim();
+            category = (obj.category || "").trim();
+            extra = Array.isArray(obj.extra_keywords) ? obj.extra_keywords.filter(Boolean) : [];
+        } catch {
+            // ignore
+        }
     }
-    let obj = {};
-    try { obj = JSON.parse(j.choices?.[0]?.message?.content || "{}"); } catch { }
-    if (Array.isArray(obj.queries) && obj.queries.length > 0) {
-        return obj.queries.filter(q => q && q.trim()).slice(0, 4);
+
+    // クエリを組み立てる
+    // 1) サイト言語での本命
+    const queries = [];
+
+    const extraStr = extra.join(" ").trim();
+
+    // --- siteLang 系 ---
+    if (brand && category) {
+        queries.push({ q: `${brand} ${category} ${extraStr}`.trim(), lang: siteLang });
     }
-    return [userText];
+    if (category) {
+        queries.push({ q: `${category} ${extraStr}`.trim(), lang: siteLang });
+    }
+    if (brand) {
+        // ノートPC系でよくある"ThinkPad"も混ぜる
+        if (/lenovo/i.test(brand) || /联想/.test(brand) || /レノボ/.test(brand)) {
+            queries.push({ q: `${brand} ThinkPad`, lang: siteLang });
+        }
+        queries.push({ q: `${brand} ${extraStr}`.trim(), lang: siteLang });
+    }
+
+    // --- 英語系（グローバルに一番当たりやすい） ---
+    // brand + laptop
+    if (brand) {
+        queries.push({ q: `${brand} laptop`, lang: "en-US" });
+        queries.push({ q: `${brand} notebook`, lang: "en-US" });
+    }
+    // generic laptop
+    if (!category) {
+        queries.push({ q: "laptop", lang: "en-US" });
+    }
+
+    // --- ユーザーの言語でも一応 ---
+    if (!userLang.startsWith("en")) {
+        if (brand && category) {
+            queries.push({ q: `${brand} ${category}`, lang: userLang });
+        } else {
+            queries.push({ q: userText, lang: userLang });
+        }
+    }
+
+    // 重複除去
+    const seen = new Set();
+    const uniq = [];
+    for (const { q, lang } of queries) {
+        const key = `${q}||${lang}`;
+        if (!q) continue;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        uniq.push({ q, lang });
+    }
+
+    // 最低でもオリジナルは入れておく
+    if (uniq.length === 0) {
+        uniq.push({ q: userText, lang: userLang });
+    }
+
+    return uniq;
 }
 
-// =====================================================
-// メイン処理
-// =====================================================
+// ========== main ==========
 module.exports = async (req, res) => {
     // CORS
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -265,37 +281,32 @@ module.exports = async (req, res) => {
     try {
         const { text = "", lang = "en-US", siteHost = "" } = await readJson(req);
 
-        // 1) ユーザーが何語で書いたかをグローバルに判定
-        const langCode = await detectTextLangGlobal(text, lang);   // 例: "th", "pt", "ru", "ja", "zh", ...
-        // UIで使う形に直す（"th" → "th", "pt-BR" → "pt-BR" のままでOK）
-        const uiLang = langCode; // UIはこのまま使う
-
-        // 2) UIメッセージをその言語で取得（知らない言語はLLMで翻訳）
-        const uiStrings = await getUiStrings(uiLang);
-
-        // 3) 検索に使う言語（サイトを優先）
-        const searchLang = detectSiteSearchLang(siteHost, uiLang);
-
-        // 4) その検索言語でクエリを複数本つくる
-        const queries = await generateSearchQueries(text, searchLang, siteHost);
+        // 1) ユーザー入力の言語をグローバルに判定
+        const userLangCode = await detectTextLangGlobal(text, lang);  // ex) "ja", "zh", "th", "pt-BR", ...
+        // 2) UI用のテキスト（その言語で）
+        const uiStrings = await getUiStrings(userLangCode);
+        // 3) サイトに合わせた「検索言語」
+        const searchLang = detectSiteSearchLang(siteHost, userLangCode);
+        // 4) 多言語クエリ生成
+        const multiQueries = await extractIntentAndMakeQueries(text, searchLang, userLangCode, siteHost);
 
         const SHOP_BASE = process.env.SHOP_BASE || "https://ergonomics-mu.vercel.app";
 
         let foundItems = [];
         let foundFrom = "";
 
-        // 5) まず「今いるサイト」で順番に試す
+        // 5) まず「今いるサイト」で全部試す
         if (siteHost) {
-            for (const q of queries) {
+            for (const { q, lang: qlang } of multiQueries) {
                 try {
                     const r = await fetchWithTimeout(
                         `${SHOP_BASE}/api/shop`,
                         {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ query: q, siteHost, lang: searchLang })
+                            body: JSON.stringify({ query: q, siteHost, lang: qlang })
                         },
-                        5500
+                        6000
                     );
                     const j = await r.json().catch(() => null);
                     if (j?.ok && Array.isArray(j.items) && j.items.length > 0) {
@@ -303,22 +314,24 @@ module.exports = async (req, res) => {
                         foundFrom = "site";
                         break;
                     }
-                } catch { /* 次へ */ }
+                } catch {
+                    // 次へ
+                }
             }
         }
 
-        // 6) サイトで見つからなかったら → サイト指定なしで順番に試す
+        // 6) サイトでは見つからなかった → サイト指定なしで全部試す
         if (foundItems.length === 0) {
-            for (const q of queries) {
+            for (const { q, lang: qlang } of multiQueries) {
                 try {
                     const r2 = await fetchWithTimeout(
                         `${SHOP_BASE}/api/shop`,
                         {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ query: q, siteHost: "", lang: searchLang })
+                            body: JSON.stringify({ query: q, siteHost: "", lang: qlang })
                         },
-                        5500
+                        6000
                     );
                     const j2 = await r2.json().catch(() => null);
                     if (j2?.ok && Array.isArray(j2.items) && j2.items.length > 0) {
@@ -326,11 +339,13 @@ module.exports = async (req, res) => {
                         foundFrom = "global";
                         break;
                     }
-                } catch { /* 次へ */ }
+                } catch {
+                    // 次へ
+                }
             }
         }
 
-        // 7) 返すメッセージを組み立てる（UIは必ずユーザーの言語）
+        // 7) 返す
         const messages = [];
 
         if (foundItems.length > 0) {
@@ -350,26 +365,24 @@ module.exports = async (req, res) => {
                 content: uiStrings.refine
             });
         } else {
-            // ほんとに全部ダメだったとき
+            // 全滅
             messages.push({
                 role: "assistant",
                 type: "text",
                 content: uiStrings.notFound
             });
-
-            // ECサイトなら「このサイトで検索」を1枚だけ出す（タイトルもその言語に）
             if (siteHost && isEcomHost(siteHost)) {
-                const q0 = queries[0] || text;
+                const q0 = multiQueries[0]?.q || text;
                 messages.push({
                     role: "assistant",
                     type: "products",
                     items: [
                         {
-                            title:
-                                uiLang.startsWith("ja") ? `${siteHost} で「${q0}」を検索` :
-                                    uiLang.startsWith("zh") ? `在 ${siteHost} 上搜索「${q0}」` :
-                                        // その他の言語でもなるべく自然に
-                                        `Search “${q0}” on ${siteHost}`,
+                            title: userLangCode.startsWith("ja")
+                                ? `${siteHost} で「${q0}」を検索`
+                                : userLangCode.startsWith("zh")
+                                    ? `在 ${siteHost} 上搜索「${q0}」`
+                                    : `Search “${q0}” on ${siteHost}`,
                             url: buildSiteSearchUrl(siteHost, q0),
                             price: "",
                             image: "",
@@ -382,7 +395,7 @@ module.exports = async (req, res) => {
 
         return res.status(200).json({
             ok: true,
-            reply_lang: uiLang,
+            reply_lang: userLangCode,
             messages
         });
 
