@@ -43,16 +43,9 @@ function isEcomHost(host = '') {
 function buildSiteSearchUrl(host, query) {
     const h = host.toLowerCase();
     const q = encodeURIComponent(query);
-    if (h.includes('jd.com')) {
-        return `https://search.jd.com/Search?keyword=${q}`;
-    }
-    if (h.includes('amazon.')) {
-        return `https://${host}/s?k=${q}`;
-    }
-    if (h.includes('rakuten.')) {
-        return `https://${host}/search/mall/${q}/`;
-    }
-    // 汎用
+    if (h.includes('jd.com')) return `https://search.jd.com/Search?keyword=${q}`;
+    if (h.includes('amazon.')) return `https://${host}/s?k=${q}`;
+    if (h.includes('rakuten.')) return `https://${host}/search/mall/${q}/`;
     return `https://${host}/search?q=${q}`;
 }
 
@@ -61,9 +54,9 @@ async function llmQueryGen(text, lang, siteHost) {
 You are a shopping assistant.
 - Detect user's language and ALWAYS respond in that language.
 - Produce EXACT JSON (no extra text) with up to 3 "queries" for product search.
-- Also output "lang_code" with one of: "ja", "zh", "en" (pick the best guess for the user's message).
+- Also output "lang_code" with best guess for the user's message (ja / zh / en).
 - Prefer site-specific queries if a siteHost looks like an e-commerce domain.
-- Keep each query concise but specific (brand/model/size as needed).
+- Keep each query concise but specific.
 
 Response schema:
 {
@@ -73,9 +66,9 @@ Response schema:
 }
 `;
     const user = `User (${lang}): ${text}
-Current site host: ${siteHost || '(none)'}
-If siteHost seems e-commerce, generate queries focused on that site (e.g., include brand/model/keywords that would work well on that site).`;
+Current site host: ${siteHost || '(none)'}`;
 
+    // ---- ここで落ちても上で拾うのでOKにする
     const resp = await fetch(`${OPENAI_API_BASE}/v1/chat/completions`, {
         method: 'POST',
         headers: {
@@ -100,8 +93,20 @@ If siteHost seems e-commerce, generate queries focused on that site (e.g., inclu
     return {
         reply_text: obj.reply_text,
         queries,
-        lang_code: obj.lang_code // ← LLMが決めた言語
+        lang_code: obj.lang_code
     };
+}
+
+// ---- fetch にタイムアウトをつける小さいユーティリティ
+async function fetchWithTimeout(url, opt = {}, ms = 5000) {
+    const ctrl = new AbortController();
+    const id = setTimeout(() => ctrl.abort(), ms);
+    try {
+        const r = await fetch(url, { ...opt, signal: ctrl.signal });
+        return r;
+    } finally {
+        clearTimeout(id);
+    }
 }
 
 module.exports = async (req, res) => {
@@ -115,69 +120,67 @@ module.exports = async (req, res) => {
     try {
         const { text = '', lang = 'en-US', siteHost = '' } = await readJson(req);
 
-        // 1) LLMで検索クエリ生成
-        const qgen = await llmQueryGen(text, lang, siteHost);
-        // LLMが決めた言語を優先する
-        const replyLang =
-            qgen.lang_code === 'ja' ? 'ja-JP'
-                : qgen.lang_code === 'zh' ? 'zh-CN'
-                    : qgen.lang_code === 'en' ? 'en-US'
-                        : lang;
+        // 1) まず LLM。ここで例外が出ても下でフォールバックするように try で囲む
+        let qgen;
+        try {
+            qgen = await llmQueryGen(text, lang, siteHost);
+        } catch (err) {
+            // LLMが死んだらとりあえずユーザー入力をそのままクエリにする
+            qgen = {
+                reply_text: '',
+                queries: [text].filter(Boolean),
+                lang_code: null
+            };
+        }
 
-        // 2) /api/shop で実検索
+        const replyLang =
+            qgen.lang_code === 'ja' ? 'ja-JP' :
+                qgen.lang_code === 'zh' ? 'zh-CN' :
+                    qgen.lang_code === 'en' ? 'en-US' :
+                        lang;
+
+        // 2) /api/shop を(なるべく)回す
         const itemsAll = [];
         const SHOP_BASE = process.env.SHOP_BASE || 'https://ergonomics-mu.vercel.app';
 
         for (const q of qgen.queries) {
-            let j = null;
             try {
-                const r = await fetch(`${SHOP_BASE}/api/shop`, {
+                const r = await fetchWithTimeout(`${SHOP_BASE}/api/shop`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ query: q, siteHost, lang: replyLang })
-                });
-                j = await r.json().catch(() => null);
-            } catch (err) {
-                j = null;
-            }
-
-            if (j?.ok && Array.isArray(j.items)) {
-                for (const it of j.items) {
-                    const key = (it.title || '') + (it.url || '');
-                    if (!itemsAll.find(x => (x.title || '') + (x.url || '') === key)) {
-                        itemsAll.push(it);
+                }, 5500); // 5.5秒で切る
+                const j = await r.json().catch(() => null);
+                if (j?.ok && Array.isArray(j.items)) {
+                    for (const it of j.items) {
+                        const key = (it.title || '') + (it.url || '');
+                        if (!itemsAll.find(x => (x.title || '') + (x.url || '') === key)) {
+                            itemsAll.push(it);
+                        }
+                        if (itemsAll.length >= 6) break;
                     }
-                    if (itemsAll.length >= 6) break;
                 }
+            } catch (err) {
+                // 1件コケても無視
             }
-
             if (itemsAll.length >= 6) break;
         }
 
-        // 3) 応答を組み立て
+        // 3) レスポンス組み立て
         const top = itemsAll.slice(0, 3);
         const messages = [];
 
-        // LLMが出した最初の文
         messages.push({
             role: 'assistant',
             type: 'text',
-            content: qgen.reply_text || localeMsg(replyLang, 'here')
+            content: qgen.reply_text || localeMsg(replyLang, top.length ? 'here' : 'notFound')
         });
 
         if (top.length > 0) {
-            // 普通のケース：商品が見つかった
             messages.push({ role: 'assistant', type: 'products', items: top });
             messages.push({ role: 'assistant', type: 'text', content: localeMsg(replyLang, 'refine') });
         } else {
-            // 見つからなかったケース
-            messages.push({
-                role: 'assistant',
-                type: 'text',
-                content: localeMsg(replyLang, 'notFound')
-            });
-
-            // ECサイトっぽかったら、そのサイトの検索リンクを1件だけカードで返す
+            // ECサイトにいるなら検索リンクを1個返す
             if (siteHost && isEcomHost(siteHost) && qgen.queries[0]) {
                 const url = buildSiteSearchUrl(siteHost, qgen.queries[0]);
                 messages.push({
@@ -185,12 +188,11 @@ module.exports = async (req, res) => {
                     type: 'products',
                     items: [
                         {
-                            title:
-                                replyLang.startsWith('ja')
-                                    ? `${siteHost} で「${qgen.queries[0]}」を検索`
-                                    : replyLang.startsWith('zh')
-                                        ? `在 ${siteHost} 上搜索「${qgen.queries[0]}」`
-                                        : `Search “${qgen.queries[0]}” on ${siteHost}`,
+                            title: replyLang.startsWith('ja')
+                                ? `${siteHost} で「${qgen.queries[0]}」を検索`
+                                : replyLang.startsWith('zh')
+                                    ? `在 ${siteHost} 上搜索「${qgen.queries[0]}」`
+                                    : `Search “${qgen.queries[0]}” on ${siteHost}`,
                             url,
                             price: '',
                             source: siteHost
@@ -198,7 +200,6 @@ module.exports = async (req, res) => {
                     ]
                 });
             }
-            // 最後の「さらに絞れます」もその言語で
             messages.push({ role: 'assistant', type: 'text', content: localeMsg(replyLang, 'refine') });
         }
 
