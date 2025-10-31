@@ -2,16 +2,15 @@
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_API_BASE = process.env.OPENAI_API_BASE || "https://api.openai.com";
 
-// =====================================================
-// 共通ユーティリティ
-// =====================================================
+// --------------------------------------------------
+// common helpers
+// --------------------------------------------------
 async function readJson(req) {
     let body = "";
     for await (const chunk of req) body += chunk;
     try { return JSON.parse(body || "{}"); } catch { return {}; }
 }
 
-// 画面に出すメッセージ（ユーザーの言語だけを見る）
 function localeMsg(uiLang, key) {
     const ja = {
         found: "以下が見つかりました。",
@@ -22,7 +21,7 @@ function localeMsg(uiLang, key) {
     const zh = {
         found: "找到了以下商品。",
         otherSite: "当前站点没找到，我从其他平台给你找了一些。",
-        notFound: "这次没有找到，麻烦再多说一点关键词或条件。",
+        notFound: "这次没有找到，请再补充一点关键词或条件。",
         refine: "说下预算/品牌/用途，我可以再筛选。"
     };
     const en = {
@@ -35,7 +34,6 @@ function localeMsg(uiLang, key) {
     return L[key];
 }
 
-// 今いるサイトがECっぽいか
 function isEcomHost(host = "") {
     const h = host.toLowerCase();
     return (
@@ -48,7 +46,6 @@ function isEcomHost(host = "") {
     );
 }
 
-// そのサイトでの検索URLをつくる（API使えない前提）
 function buildSiteSearchUrl(host, query) {
     const h = host.toLowerCase();
     const q = encodeURIComponent(query);
@@ -58,7 +55,6 @@ function buildSiteSearchUrl(host, query) {
     return `https://${host}/search?q=${q}`;
 }
 
-// fetchにタイムアウトをつける
 async function fetchWithTimeout(url, opt = {}, ms = 5000) {
     const ctrl = new AbortController();
     const id = setTimeout(() => ctrl.abort(), ms);
@@ -70,16 +66,14 @@ async function fetchWithTimeout(url, opt = {}, ms = 5000) {
     }
 }
 
-// =====================================================
-// 1) ユーザーの入力テキストが何語かを判定する
-//    → UIはこれに絶対合わせる
-// =====================================================
+// --------------------------------------------------
+// 1) ユーザーの入力が何語かを判定（UI用）
+// --------------------------------------------------
 async function detectTextLang(text, fallbackLang = "en-US") {
-    // 超シンプルにやるならここで正規表現でもいいが、今回はLLMで確実にする
     const system = `
 You are a language detector.
 Detect whether the text is Japanese, Chinese, or English.
-Return EXACT JSON like: {"lang_code":"ja"} or {"lang_code":"zh"} or {"lang_code":"en"}
+Return EXACT JSON: {"lang_code":"ja"|"zh"|"en"}
 `;
     const resp = await fetch(`${OPENAI_API_BASE}/v1/chat/completions`, {
         method: "POST",
@@ -116,35 +110,61 @@ Return EXACT JSON like: {"lang_code":"ja"} or {"lang_code":"zh"} or {"lang_code"
             : "en";
 }
 
-// =====================================================
-// 2) 内部の検索で使う言語を「サイト側」に寄せて決める
-//    ・JD → zh-CN
-//    ・amazon.co.jp / rakuten / yahoo.co.jp → ja-JP
-//    ・それ以外 → ユーザーの言語(uiLang)
-// =====================================================
+// --------------------------------------------------
+// 2) サイト側の検索に合わせる言語を決める
+// --------------------------------------------------
 function detectSiteSearchLang(host = "", uiLang = "en-US") {
     const h = host.toLowerCase();
-    // JDは中国語に寄せる
+
+    // JDは中国語のほうが当たる
     if (h.includes("jd.com")) return "zh-CN";
-    // それ以外はユーザーの言語で検索
+
+    // 日本のECは日本語
+    if (
+        h.includes("amazon.co.jp") ||
+        h.includes("rakuten.co.jp") ||
+        h.includes("rakuten.jp") ||
+        h.includes("shopping.yahoo.co.jp") ||
+        h.includes("yahoo.co.jp")
+    ) {
+        return "ja-JP";
+    }
+
+    // それ以外はユーザーの言語で
     return uiLang;
 }
 
-// =====================================================
-// 3) 指定した言語で検索しやすいクエリに正規化
-// =====================================================
-async function normalizeQueryToLang(userText, targetLang, siteHost = "") {
+// --------------------------------------------------
+// 3) ★改良版★ クエリを複数本つくる
+//    - queries[0]: いちばん素直なもの
+//    - queries[1]: brand + category
+//    - queries[2]: brand only
+//    - queries[3]: 英語ブランド（fallback）
+// --------------------------------------------------
+async function generateSearchQueries(userText, targetLang, siteHost = "") {
     const system = `
 You are an e-commerce query normalizer.
-Rewrite the user message into ONE search query in the target language.
-Return EXACT JSON: {"query":"..."}
-Don't add explanations.
+Goal:
+- User may say very vague things like "I want a Lenovo PC" or "想买新的电脑".
+- You must generate MULTIPLE search queries that are likely to hit on the target site.
+- Output EXACT JSON only.
+- FIRST query: the best, specific one.
+- SECOND query: brand + category (e.g. "联想 笔记本电脑", "レノボ ノートパソコン").
+- THIRD query: brand only (e.g. "Lenovo", "联想", "レノボ").
+- FOURTH query (optional): English brand+category (e.g. "Lenovo laptop") to increase recall.
+Response schema:
+{
+  "queries": ["string", "string", "string", "string"]
+}
+All queries should be in the target language if possible, but you may include an English variant in the last position.
 `;
     const user = `
 Target language: ${targetLang}
 Site: ${siteHost || "(none)"}
 User text: ${userText}
+Brand and model should be explicit if user implied them.
 `;
+
     const resp = await fetch(`${OPENAI_API_BASE}/v1/chat/completions`, {
         method: "POST",
         headers: {
@@ -162,16 +182,21 @@ User text: ${userText}
     });
     const j = await resp.json();
     if (!resp.ok) {
-        return userText; // フォールバック
+        // 壊れたら1本だけ返す
+        return [userText];
     }
     let obj = {};
     try { obj = JSON.parse(j.choices?.[0]?.message?.content || "{}"); } catch { }
-    return obj.query || userText;
+    if (Array.isArray(obj.queries) && obj.queries.length > 0) {
+        // 空文字を除いて最大4本にする
+        return obj.queries.filter(q => q && q.trim()).slice(0, 4);
+    }
+    return [userText];
 }
 
-// =====================================================
-// main handler
-// =====================================================
+// --------------------------------------------------
+// main
+// --------------------------------------------------
 module.exports = async (req, res) => {
     // CORS
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -183,106 +208,96 @@ module.exports = async (req, res) => {
     try {
         const { text = "", lang = "en-US", siteHost = "" } = await readJson(req);
 
-        // ① ユーザーが実際に打った言語を判定 → これをUIに使う（絶対）
+        // 1) UI用の言語（ユーザーが打った言語）を決める
         const detected = await detectTextLang(text, lang);
         const uiLang =
             detected === "ja" ? "ja-JP" :
                 detected === "zh" ? "zh-CN" :
                     "en-US";
 
-        // ② 検索に使う言語はサイトに合わせる
+        // 2) 検索に使う言語をサイトに合わせて決める
         const searchLang = detectSiteSearchLang(siteHost, uiLang);
 
-        // ③ その検索言語でクエリを1本きれいにする
-        const queryForSite = await normalizeQueryToLang(text, searchLang, siteHost);
+        // 3) その検索言語で「複数本」クエリをつくる
+        const queries = await generateSearchQueries(text, searchLang, siteHost);
 
-        // ④ 実際にショップAPIを叩く
         const SHOP_BASE = process.env.SHOP_BASE || "https://ergonomics-mu.vercel.app";
 
-        let siteItems = [];
-        let globalItems = [];
+        let foundItems = [];
+        let foundFrom = ""; // "site" | "global" | ""
 
-        // 1) 今のサイトで検索（サイト言語で）
+        // 4) まず「今いるサイト」でクエリを順番に試す
         if (siteHost) {
-            try {
-                const r = await fetchWithTimeout(
-                    `${SHOP_BASE}/api/shop`,
-                    {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                            query: queryForSite,
-                            siteHost,
-                            lang: searchLang
-                        })
-                    },
-                    5500
-                );
-                const j = await r.json().catch(() => null);
-                if (j?.ok && Array.isArray(j.items)) {
-                    siteItems = j.items;
+            for (const q of queries) {
+                try {
+                    const r = await fetchWithTimeout(
+                        `${SHOP_BASE}/api/shop`,
+                        {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ query: q, siteHost, lang: searchLang })
+                        },
+                        5500
+                    );
+                    const j = await r.json().catch(() => null);
+                    if (j?.ok && Array.isArray(j.items) && j.items.length > 0) {
+                        foundItems = j.items;
+                        foundFrom = "site";
+                        break;
+                    }
+                } catch {
+                    // 次のクエリへ
                 }
-            } catch {
-                // 無視して次へ
             }
         }
 
-        // 2) 今のサイトでダメなら → サイト指定なしで同じクエリを投げる
-        if (siteItems.length === 0) {
-            try {
-                const r2 = await fetchWithTimeout(
-                    `${SHOP_BASE}/api/shop`,
-                    {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                            query: queryForSite,
-                            siteHost: "",
-                            lang: searchLang
-                        })
-                    },
-                    5500
-                );
-                const j2 = await r2.json().catch(() => null);
-                if (j2?.ok && Array.isArray(j2.items)) {
-                    globalItems = j2.items;
+        // 5) サイトでは見つからなかった場合、サイト指定なしで同じクエリを順番に試す
+        if (foundItems.length === 0) {
+            for (const q of queries) {
+                try {
+                    const r2 = await fetchWithTimeout(
+                        `${SHOP_BASE}/api/shop`,
+                        {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ query: q, siteHost: "", lang: searchLang })
+                        },
+                        5500
+                    );
+                    const j2 = await r2.json().catch(() => null);
+                    if (j2?.ok && Array.isArray(j2.items) && j2.items.length > 0) {
+                        foundItems = j2.items;
+                        foundFrom = "global";
+                        break;
+                    }
+                } catch {
+                    // 次のクエリ
                 }
-            } catch {
-                // 無視
             }
         }
 
-        // ⑤ 応答を組み立てる（ここからは絶対に uiLang だけを使う！）
+        // 6) 応答を組む（UIは常に uiLang で）
         const messages = [];
 
-        if (siteItems.length > 0) {
-            // 今のサイトで見つかった
-            messages.push({
-                role: "assistant",
-                type: "text",
-                content: localeMsg(uiLang, "found")
-            });
-            messages.push({
-                role: "assistant",
-                type: "products",
-                items: siteItems.slice(0, 6)
-            });
-            messages.push({
-                role: "assistant",
-                type: "text",
-                content: localeMsg(uiLang, "refine")
-            });
-        } else if (globalItems.length > 0) {
-            // サイトではダメだったけど他からは出た
-            messages.push({
-                role: "assistant",
-                type: "text",
-                content: localeMsg(uiLang, "otherSite")
-            });
+        if (foundItems.length > 0) {
+            // どこかで見つかった
+            if (foundFrom === "site") {
+                messages.push({
+                    role: "assistant",
+                    type: "text",
+                    content: localeMsg(uiLang, "found")
+                });
+            } else {
+                messages.push({
+                    role: "assistant",
+                    type: "text",
+                    content: localeMsg(uiLang, "otherSite")
+                });
+            }
             messages.push({
                 role: "assistant",
                 type: "products",
-                items: globalItems.slice(0, 6)
+                items: foundItems.slice(0, 6)
             });
             messages.push({
                 role: "assistant",
@@ -290,26 +305,28 @@ module.exports = async (req, res) => {
                 content: localeMsg(uiLang, "refine")
             });
         } else {
-            // 本当に何もなかった
+            // ほんとうに全クエリでダメだったとき
             messages.push({
                 role: "assistant",
                 type: "text",
                 content: localeMsg(uiLang, "notFound")
             });
 
-            // ECサイトにいるなら「このサイトで検索」だけは出す（UI言語で）
+            // ECサイトにいるなら「このサイトで検索」だけ出す
             if (siteHost && isEcomHost(siteHost)) {
+                // 一番最初に作ったクエリか、なければユーザーの原文を使う
+                const q0 = queries[0] || text;
                 messages.push({
                     role: "assistant",
                     type: "products",
                     items: [
                         {
                             title: uiLang.startsWith("ja")
-                                ? `${siteHost} で「${text}」を検索`
+                                ? `${siteHost} で「${q0}」を検索`
                                 : uiLang.startsWith("zh")
-                                    ? `在 ${siteHost} 上搜索「${text}」`
-                                    : `Search “${text}” on ${siteHost}`,
-                            url: buildSiteSearchUrl(siteHost, text),
+                                    ? `在 ${siteHost} 上搜索「${q0}」`
+                                    : `Search “${q0}” on ${siteHost}`,
+                            url: buildSiteSearchUrl(siteHost, q0),
                             price: "",
                             image: "",
                             source: siteHost
@@ -324,10 +341,8 @@ module.exports = async (req, res) => {
             reply_lang: uiLang,
             messages
         });
-
     } catch (e) {
         console.error("[chatbot] error", e);
-        // extension が壊れないように 200 で返す
         return res.status(200).json({ ok: false, error: String(e) });
     }
 };
