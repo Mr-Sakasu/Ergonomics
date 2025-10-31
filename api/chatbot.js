@@ -2,58 +2,46 @@
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const OPENAI_API_BASE = process.env.OPENAI_API_BASE || 'https://api.openai.com';
 
-function mkSearchLink(engine, query) {
-    const q = encodeURIComponent(query);
-    if (engine === 'bing') return `https://www.bing.com/search?q=${q}`;
-    return `https://www.google.com/search?q=${q}`; // default google
+async function readJson(req) {
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    try { return JSON.parse(body || '{}'); } catch { return {}; }
 }
 
-function fallback(lang, text) {
-    const msg =
-        lang?.startsWith('ja') ? '了解です。まずは検索キーワードをもう少し具体化してください。'
-            : lang?.startsWith('zh') ? '好的。请把需求再具体一些，比如预算/品牌/用途。'
-                : 'Got it. Please add budget/brand/use case to refine.';
-    return {
-        ok: true,
-        reply_lang: lang || 'en-US',
-        messages: [
-            { role: 'assistant', type: 'text', content: msg },
-            {
-                role: 'assistant',
-                type: 'products',
-                items: [
-                    {
-                        title: text || 'Your item',
-                        url: mkSearchLink('google', (text || 'best value product')),
-                        reason: lang?.startsWith('ja') ? 'まずは相場感を把握' :
-                            lang?.startsWith('zh') ? '先了解价格区间' :
-                                'Get a sense of price range'
-                    }
-                ]
-            }
-        ]
+function localeMsg(lang, key) {
+    const ja = {
+        refine: '価格帯・ブランド・用途を言ってくれればさらに絞れます。',
+        here: 'このあたりが候補です。'
     };
+    const zh = {
+        refine: '说下预算/品牌/用途，我可以再筛选。',
+        here: '这些是候选。'
+    };
+    const en = {
+        refine: 'Tell me budget/brand/use case to refine.',
+        here: 'Here are some options.'
+    };
+    const L = lang?.startsWith('ja') ? ja : lang?.startsWith('zh') ? zh : en;
+    return L[key];
 }
 
-async function callOpenAIRecommend(userText, lang) {
+async function llmQueryGen(text, lang, siteHost) {
     const system = `
-You are an AI shopping companion.
-- Detect the user's language and ALWAYS respond in that language.
-- DO NOT invent real product URLs.
-- For each recommendation, output a short reason and a SEARCH QUERY string the user can click (Google/Bing).
-- Keep text concise (<= 120 chars per item).
-- Return strict JSON with this shape:
+You are a shopping assistant.
+- Detect user's language and ALWAYS respond in that language.
+- Produce EXACT JSON (no extra text) with up to 3 "queries" for product search.
+- Prefer site-specific queries if a siteHost looks like an e-commerce domain.
+- Keep each query concise but specific (brand/model/size as needed).
+
+Response schema:
 {
-  "reply_text": "string, same language",
-  "engine": "google" | "bing",
-  "items": [
-    { "title": "string", "reason": "string", "search_query": "string" },
-    { "title": "string", "reason": "string", "search_query": "string" },
-    { "title": "string", "reason": "string", "search_query": "string" }
-  ]
+  "reply_text": "string",
+  "queries": ["string", "string", "string"]
 }
 `;
-    const user = `User (${lang}): ${userText}`;
+    const user = `User (${lang}): ${text}
+Current site host: ${siteHost || '(none)'}
+If siteHost seems e-commerce, generate queries focused on that site (e.g., include brand/model/keywords that would work well on that site).`;
 
     const resp = await fetch(`${OPENAI_API_BASE}/v1/chat/completions`, {
         method: 'POST',
@@ -70,16 +58,13 @@ You are an AI shopping companion.
             ]
         })
     });
-    const json = await resp.json();
-    if (!resp.ok) throw new Error(json?.error?.message || 'openai error');
+    const j = await resp.json();
+    if (!resp.ok) throw new Error(j?.error?.message || 'openai error');
 
-    let obj;
-    try {
-        obj = JSON.parse(json.choices?.[0]?.message?.content || '{}');
-    } catch {
-        obj = null;
-    }
-    return obj;
+    let obj = {};
+    try { obj = JSON.parse(j.choices?.[0]?.message?.content || '{}'); } catch { }
+    const queries = Array.isArray(obj.queries) ? obj.queries.slice(0, 3) : [text].filter(Boolean);
+    return { reply_text: obj.reply_text, queries };
 }
 
 module.exports = async (req, res) => {
@@ -91,45 +76,41 @@ module.exports = async (req, res) => {
     if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'Method not allowed' });
 
     try {
-        let body = '';
-        for await (const chunk of req) body += chunk;
-        const { text = '', lang = 'ja-JP' } = JSON.parse(body || '{}');
+        const { text = '', lang = 'ja-JP', siteHost = '' } = await readJson(req);
 
-        if (!OPENAI_API_KEY) {
-            return res.status(200).json(fallback(lang, text));
+        // 1) LLMで検索クエリを作成（site-aware）
+        const qgen = await llmQueryGen(text, lang, siteHost);
+
+        // 2) /api/shop にクエリを1〜3回投げて結合（重複は先頭優先）
+        const itemsAll = [];
+        for (const q of qgen.queries) {
+            const r = await fetch(`${req.headers['https://ergonomics-mu.vercel.app/'] ? 'https://' + req.headers['https://ergonomics-mu.vercel.app/'] : ''}/api/shop`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query: q, siteHost, lang })
+            }).catch(() => null);
+
+            const j = r ? await r.json().catch(() => null) : null;
+            if (j?.ok && Array.isArray(j.items)) {
+                for (const it of j.items) {
+                    const key = (it.title || '') + (it.url || '');
+                    if (!itemsAll.find(x => (x.title || '') + (x.url || '') === key)) itemsAll.push(it);
+                    if (itemsAll.length >= 6) break;
+                }
+            }
+            if (itemsAll.length >= 6) break;
         }
 
-        const result = await callOpenAIRecommend(text, lang);
-        if (!result || !Array.isArray(result.items)) {
-            return res.status(200).json(fallback(lang, text));
-        }
-
-        const engine = result.engine === 'bing' ? 'bing' : 'google';
-        const items = result.items.slice(0, 3).map(it => ({
-            title: it.title,
-            url: mkSearchLink(engine, it.search_query || it.title),
-            reason: it.reason
-        }));
-
-        const replyText = result.reply_text ||
-            (lang.startsWith('ja') ? 'このあたりが候補です。' :
-                lang.startsWith('zh') ? '这些是可选项。' :
-                    'Here are some options.');
+        // 3) 上位3つだけ返す
+        const top = itemsAll.slice(0, 3);
 
         return res.status(200).json({
             ok: true,
             reply_lang: lang,
             messages: [
-                { role: 'assistant', type: 'text', content: replyText },
-                { role: 'assistant', type: 'products', items },
-                {
-                    role: 'assistant',
-                    type: 'text',
-                    content:
-                        lang.startsWith('ja') ? '価格帯やブランド、用途を言えばさらに絞れます。' :
-                            lang.startsWith('zh') ? '说预算/品牌/用途，我可以再筛选。' :
-                                'Tell me budget/brand/use case to refine.'
-                }
+                { role: 'assistant', type: 'text', content: qgen.reply_text || localeMsg(lang, 'here') },
+                { role: 'assistant', type: 'products', items: top },
+                { role: 'assistant', type: 'text', content: localeMsg(lang, 'refine') }
             ]
         });
     } catch (e) {

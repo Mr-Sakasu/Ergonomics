@@ -140,25 +140,47 @@ function addBotText(text) {
   msgBox.appendChild(div);
   msgBox.scrollTop = msgBox.scrollHeight;
 }
+
 function addProductCards(items = []) {
   const wrap = document.createElement('div');
   wrap.style.display = 'flex';
   wrap.style.flexDirection = 'column';
-  wrap.style.gap = '5px';
+  wrap.style.gap = '6px';
   wrap.style.alignSelf = 'flex-start';
+
   items.forEach(it => {
     const card = document.createElement('div');
     card.style.background = 'rgba(255,255,255,.02)';
-    card.style.border = '1px solid rgba(255,255,255,.02)';
+    card.style.border = '1px solid rgba(255,255,255,.06)';
     card.style.borderRadius = '10px';
-    card.style.padding = '5px 7px';
-    card.innerHTML = `
-      <div style="font-weight:600;font-size:13px;line-height:1.2;">${it.title}</div>
-      ${it.reason ? `<div style="font-size:11px;opacity:.75;margin:2px 0;">${it.reason}</div>` : ''}
-      ${it.url ? `<a href="${it.url}" target="_blank" style="font-size:11px;color:#22d3ee;text-decoration:none;">${t ? t('linkOpen') : 'Open'}</a>` : ''}
+    card.style.padding = '6px 8px';
+    card.style.display = 'grid';
+    card.style.gridTemplateColumns = '56px 1fr';
+    card.style.gap = '8px';
+
+    const img = document.createElement('img');
+    img.src = it.image || '';
+    img.alt = it.title || '';
+    img.style.width = '56px';
+    img.style.height = '56px';
+    img.style.objectFit = 'cover';
+    img.style.borderRadius = '8px';
+    if (!it.image) img.style.display = 'none';
+
+    const info = document.createElement('div');
+    info.innerHTML = `
+      <div style="font-weight:600;font-size:13px;line-height:1.25;">${it.title || ''}</div>
+      <div style="font-size:12px;opacity:.8;margin-top:2px;">
+        ${it.price ? `¥${it.price}` : t('priceUnknown')}${it.source ? ` · ${it.source}` : ''}
+      </div>
+      ${it.url ? `<a href="${it.url}" target="_blank" style="font-size:11px;color:#22d3ee;text-decoration:none;margin-top:4px;display:inline-block;">${t('linkOpen')}</a>` : ''}
     `;
+
+    card.appendChild(img);
+    card.appendChild(info);
     wrap.appendChild(card);
   });
+
   msgBox.appendChild(wrap);
   msgBox.scrollTop = msgBox.scrollHeight;
 }
@@ -171,15 +193,20 @@ function sendMessage() {
   addUserBubble(text);
   inputEl.value = '';
 
+  const siteHost = location.hostname || '';
+
   chrome.runtime.sendMessage(
-    { type: 'AI_CHAT', payload: { text, lang: navigator.language || 'en-US', provider: 'jd' } },
+    {
+      type: 'AI_CHAT',
+      payload: { text, lang: navigator.language || 'en-US', provider: 'llm', siteHost }
+    },
     resp => {
       if (!resp || !resp.ok) return addBotText(t('errServer'));
       const data = resp.data;
       if (!data || !Array.isArray(data.messages)) return addBotText(t('errFormat'));
       data.messages.forEach(m => {
         if (m.type === 'text') addBotText(m.content);
-        if (m.type === 'products') addProductCards(m.items);
+        if (m.type === 'products') addProductCards(m.items);   // 下の更新版で価格&画像対応
       });
     }
   );
