@@ -167,13 +167,17 @@ function addProductCards(items = []) {
     img.style.borderRadius = '8px';
     if (!it.image) img.style.display = 'none';
 
+    const priceText = it.price
+      ? (/^[¥￥$]/.test(String(it.price)) ? String(it.price) : `¥${it.price}`)
+      : (typeof t === 'function' ? t('priceUnknown') : 'Price unknown');
+
     const info = document.createElement('div');
     info.innerHTML = `
       <div style="font-weight:600;font-size:13px;line-height:1.25;">${it.title || ''}</div>
       <div style="font-size:12px;opacity:.8;margin-top:2px;">
-        ${it.price ? `¥${it.price}` : t('priceUnknown')}${it.source ? ` · ${it.source}` : ''}
+        ${priceText}${it.source ? ` · ${it.source}` : ''}
       </div>
-      ${it.url ? `<a href="${it.url}" target="_blank" style="font-size:11px;color:#22d3ee;text-decoration:none;margin-top:4px;display:inline-block;">${t('linkOpen')}</a>` : ''}
+      ${it.url ? `<a href="${it.url}" target="_blank" style="font-size:11px;color:#22d3ee;text-decoration:none;margin-top:4px;display:inline-block;">Open</a>` : ''}
     `;
 
     card.appendChild(img);
@@ -186,6 +190,7 @@ function addProductCards(items = []) {
 }
 
 
+
 // ---- send ----
 function sendMessage() {
   const text = inputEl.value.trim();
@@ -195,10 +200,14 @@ function sendMessage() {
 
   const siteHost = location.hostname || '';
 
-  chrome.runtime.sendMessage(
+chrome.runtime.sendMessage(
     {
       type: 'AI_CHAT',
-      payload: { text, lang: navigator.language || 'en-US', provider: 'llm', siteHost }
+      payload: {
+        text,
+        lang: navigator.language || 'en-US',
+        siteHost: location.hostname || ''
+      }
     },
     resp => {
       if (!resp || !resp.ok) return addBotText(t('errServer'));
