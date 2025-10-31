@@ -1,8 +1,6 @@
 // extension/background.js
 console.log('[AIC] BG loaded');
-
-const BASE_URL = 'https://ergonomics-mu.vercel.app/api'; // ←ここを固定
-
+const BASE_URL = 'https://ergonomics-mu.vercel.app/api';
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'AI_CHAT') {
     fetch(`${BASE_URL}/chatbot`, {
