@@ -86,7 +86,7 @@ panel.innerHTML = `
       cursor:pointer; opacity:.55;
     " title="${t('minimize')}">–</button>
   </div>
-  <div id="aic-messages" style="flex:1; padding:10px; display:flex; flex-direction:column; gap:6px; overflow-y:auto;"></div>
+  <div id="aic-messages" style="flex:1; min-height:0; overflow-y: scroll; padding:10px; display:flex; flex-direction:column; gap:6px; overflow-y:auto;"></div>
   <div style="display:flex; gap:6px; padding:8px 10px; border-top:1px solid rgba(255,255,255,.05); background:#0f172a;">
     <input id="aic-input" placeholder="${t('placeholder')}" autocomplete="off" style="
       flex:1; background:#0f172a; border:1px solid rgba(255,255,255,.03);
