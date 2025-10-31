@@ -83,9 +83,13 @@ module.exports = async (req, res) => {
 
         // 2) /api/shop にクエリを1〜3回投げて結合（重複は先頭優先）
         const itemsAll = [];
-        for (const q of qgen.queries) {
-            const r = await fetch(`${req.headers['https://ergonomics-mu.vercel.app/'] ? 'https://' + req.headers['https://ergonomics-mu.vercel.app/'] : ''}/api/shop`, {
-                method: 'POST',
+        // 自分自身の完全URLを作る（Vercel / ローカル両対応）
+            const baseURL =
+                  (process.env.VERCEL_URL && `https://${process.env.VERCEL_URL}`) ||
+                  (req.headers.host && `https://${req.headers.host}`) ||
+                  '';
+            for (const q of qgen.queries) {
+                  const r = await fetch(`${baseURL}/api/shop`, {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ query: q, siteHost, lang })
             }).catch(() => null);
