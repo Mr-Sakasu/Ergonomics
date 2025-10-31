@@ -140,7 +140,6 @@ function addBotText(text) {
   msgBox.appendChild(div);
   msgBox.scrollTop = msgBox.scrollHeight;
 }
-
 function addProductCards(items = []) {
   const wrap = document.createElement('div');
   wrap.style.display = 'flex';
@@ -155,14 +154,15 @@ function addProductCards(items = []) {
     card.style.padding = '5px 7px';
     card.innerHTML = `
       <div style="font-weight:600;font-size:13px;line-height:1.2;">${it.title}</div>
-      <div style="font-size:12px;opacity:.65;margin:2px 0 4px;">${it.price ? '¥' + it.price : t('priceUnknown')}</div>
-      ${it.url ? `<a href="${it.url}" target="_blank" style="font-size:11px;color:#22d3ee;text-decoration:none;">${t('linkOpen')}</a>` : ''}
+      ${it.reason ? `<div style="font-size:11px;opacity:.75;margin:2px 0;">${it.reason}</div>` : ''}
+      ${it.url ? `<a href="${it.url}" target="_blank" style="font-size:11px;color:#22d3ee;text-decoration:none;">${t ? t('linkOpen') : 'Open'}</a>` : ''}
     `;
     wrap.appendChild(card);
   });
   msgBox.appendChild(wrap);
   msgBox.scrollTop = msgBox.scrollHeight;
 }
+
 
 // ---- send ----
 function sendMessage() {
