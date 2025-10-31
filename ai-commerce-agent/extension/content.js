@@ -1,6 +1,5 @@
 // extension/content.js
-// AI Commerce Bot – top-right fixed, auto-lang + i18n
-console.log('[AIC] content v1.4 loaded');
+console.log('[AIC] content v1.5 loaded');
 
 const USER_LANG = (navigator.language || 'en-US').toLowerCase();
 
@@ -115,24 +114,17 @@ const sendBtn = panel.querySelector('#aic-send');
 const voiceBtn = panel.querySelector('#aic-voice');
 const minimizeBtn = panel.querySelector('#aic-minimize');
 
-// scrollバブルを外に伝播させない
-msgBox.addEventListener(
-  'wheel',
-  (e) => {
-    const el = msgBox;
-    const delta = e.deltaY;
-    const atTop = el.scrollTop === 0;
-    const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 1;
-    if ((delta < 0 && atTop) || (delta > 0 && atBottom)) {
-      // 外に流してOK
-      return;
-    }
-    e.preventDefault();
-    e.stopPropagation();
-    el.scrollTop += delta;
-  },
-  { passive: false }
-);
+// スクロールをページに伝播させない
+msgBox.addEventListener('wheel', e => {
+  const el = msgBox;
+  const delta = e.deltaY;
+  const atTop = el.scrollTop === 0;
+  const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 1;
+  if ((delta < 0 && atTop) || (delta > 0 && atBottom)) return;
+  e.preventDefault();
+  e.stopPropagation();
+  el.scrollTop += delta;
+}, { passive: false });
 
 // 初回メッセージ
 addBotText(t('welcome'));
@@ -155,7 +147,7 @@ function addUserBubble(text) {
 function addBotText(text) {
   const div = document.createElement('div');
   div.style.alignSelf = 'flex-start';
-  div.style.maxWidth = '85%';
+  div.style.maxWidth = '100%';
   div.style.background = 'rgba(255,255,255,.04)';
   div.style.borderRadius = '12px 12px 12px 2px';
   div.style.padding = '6px 10px';
@@ -164,7 +156,7 @@ function addBotText(text) {
   div.textContent = text;
   msgBox.appendChild(div);
   msgBox.scrollTop = msgBox.scrollHeight;
-  return div; // これで後で消せる
+  return div;
 }
 
 function addProductCards(items = []) {
@@ -172,7 +164,8 @@ function addProductCards(items = []) {
   wrap.style.display = 'flex';
   wrap.style.flexDirection = 'column';
   wrap.style.gap = '6px';
-  wrap.style.alignSelf = 'flex-start';
+  wrap.style.alignSelf = 'stretch';      // ← 全幅
+  wrap.style.width = '100%';
 
   items.forEach(it => {
     const card = document.createElement('div');
@@ -180,40 +173,55 @@ function addProductCards(items = []) {
     card.style.border = '1px solid rgba(255,255,255,.06)';
     card.style.borderRadius = '10px';
     card.style.padding = '6px 8px';
-    card.style.display = 'grid';
-    card.style.gridTemplateColumns = '56px 1fr';
-    card.style.gap = '8px';
+    card.style.display = 'flex';
+    card.style.gap = '10px';
+    card.style.width = '100%';
+    card.style.boxSizing = 'border-box';
+    card.style.alignItems = 'center';
 
-    const img = document.createElement('img');
-    img.src = it.image || '';
-    img.alt = it.title || '';
-    img.style.width = '56px';
-    img.style.height = '56px';
-    img.style.objectFit = 'cover';
-    img.style.borderRadius = '8px';
-    if (!it.image) img.style.display = 'none';
+    // 画像またはプレースホルダ
+    const thumb = document.createElement('div');
+    thumb.style.width = '56px';
+    thumb.style.height = '56px';
+    thumb.style.flex = '0 0 56px';
+    thumb.style.borderRadius = '8px';
+    thumb.style.overflow = 'hidden';
+    thumb.style.background = 'rgba(15,23,42,.35)';
+    thumb.style.display = 'flex';
+    thumb.style.alignItems = 'center';
+    thumb.style.justifyContent = 'center';
+    thumb.style.fontSize = '11px';
+    thumb.style.textAlign = 'center';
 
-    const priceText = it.price
-      ? (/^[¥￥$]/.test(String(it.price)) ? String(it.price) : `¥${it.price}`)
-      : t('priceUnknown');
+    if (it.image) {
+      const img = document.createElement('img');
+      img.src = it.image;
+      img.alt = it.title || '';
+      img.style.width = '100%';
+      img.style.height = '100%';
+      img.style.objectFit = 'cover';
+      thumb.appendChild(img);
+    } else {
+      thumb.textContent = 'No Image';
+    }
 
     const info = document.createElement('div');
+    info.style.flex = '1';
     info.innerHTML = `
       <div style="font-weight:600;font-size:13px;line-height:1.25;">${it.title || ''}</div>
       <div style="font-size:12px;opacity:.8;margin-top:2px;">
-        ${priceText}${it.source ? ` · ${it.source}` : ''}
+        ${it.price ? it.price : t('priceUnknown')}${it.source ? ` · ${it.source}` : ''}
       </div>
-      ${it.url ? `<a href="${it.url}" target="_blank" style="font-size:11px;color:#22d3ee;text-decoration:none;margin-top:4px;display:inline-block;">Open</a>` : ''}
+      ${it.url ? `<a href="${it.url}" target="_blank" style="font-size:11px;color:#22d3ee;text-decoration:none;margin-top:4px;display:inline-block;">${t('linkOpen')}</a>` : ''}
     `;
 
-    card.appendChild(img);
+    card.appendChild(thumb);
     card.appendChild(info);
     wrap.appendChild(card);
   });
 
   msgBox.appendChild(wrap);
   msgBox.scrollTop = msgBox.scrollHeight;
-  return wrap;
 }
 
 function sendMessage() {
@@ -222,7 +230,6 @@ function sendMessage() {
   addUserBubble(text);
   inputEl.value = '';
 
-  // 「検索中…」を出す
   const loading = addBotText(t('searching'));
 
   chrome.runtime.sendMessage(
@@ -235,7 +242,6 @@ function sendMessage() {
       }
     },
     resp => {
-      // 検索中を消す
       if (loading && loading.remove) loading.remove();
 
       if (!resp || !resp.ok) return addBotText(t('errServer'));
@@ -251,68 +257,13 @@ function sendMessage() {
 }
 
 sendBtn.onclick = sendMessage;
-inputEl.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
+inputEl.addEventListener('keydown', e => {
+  if (e.key === 'Enter') sendMessage();
+});
 
-// ---- voice ----
-voiceBtn.onclick = async () => {
-  if (!navigator.mediaDevices?.getUserMedia) { addBotText(t('voiceNA')); return; }
-  addBotText(t('listening'));
+// （音声の部分は前のを戻してください）
 
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  const rec = new MediaRecorder(stream);
-  const chunks = [];
-  rec.ondataavailable = e => chunks.push(e.data);
-  rec.start();
-
-  // 3.5秒だけ録音（必要に応じて調整）
-  await new Promise(r => setTimeout(r, 3500));
-  rec.stop();
-  await new Promise(r => rec.onstop = r);
-  stream.getTracks().forEach(tr => tr.stop());
-
-  const blob = new Blob(chunks, { type: 'audio/webm' });
-
-  // Blob -> base64（安全で簡単）
-  const audioBase64 = await new Promise((resolve, reject) => {
-    const fr = new FileReader();
-    fr.onload = () => {
-      const dataUrl = fr.result;                 // "data:audio/webm;base64,AAA..."
-      resolve(String(dataUrl).split(',')[1] || '');
-    };
-    fr.onerror = reject;
-    fr.readAsDataURL(blob);
-  });
-
-  if (!audioBase64) { addBotText(t('voiceErr')); return; }
-
-  // Vercelの /api/stt に送る（JSON）
-  const sttResp = await fetch('https://ergonomics-mu.vercel.app/api/stt', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ audioBase64, mimeType: blob.type || 'audio/webm' })
-  });
-  const stt = await sttResp.json();
-  if (!stt.ok || !stt.text) { addBotText(t('voiceErr')); return; }
-
-  // 文字起こし結果をそのまま送信
-  inputEl.value = stt.text;
-  addUserBubble(stt.text);
-  chrome.runtime.sendMessage(
-    { type: 'AI_CHAT', payload: { text: stt.text, lang: stt.lang || (navigator.language || 'en-US'), provider: 'jd' } },
-    resp => {
-      if (!resp || !resp.ok) return addBotText(t('errServer'));
-      const data = resp.data;
-      if (!data || !Array.isArray(data.messages)) return addBotText(t('errFormat'));
-      data.messages.forEach(m => {
-        if (m.type === 'text') addBotText(m.content);
-        if (m.type === 'products') addProductCards(m.items);
-      });
-    }
-  );
-};
-
-
-// ---- minimize ----
+// 最小化
 let minimized = false;
 minimizeBtn.onclick = () => {
   minimized = !minimized;
