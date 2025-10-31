@@ -1,9 +1,9 @@
 // extension/content.js
-console.log('[AIC] content v1.7 loaded');
+console.log('[AIC] content v1.8 loaded');
 
 const USER_LANG = (navigator.language || 'en-US').toLowerCase();
 
-// ---- i18n ----
+// ========= i18n（UI用のベース） =========
 function t(key) {
   const JA = {
     welcome: '欲しいものQを送ってください。例）「ノートPC 4万円台 軽い」「北京で食事」「2000元以内のスマホ」',
@@ -57,30 +57,65 @@ function t(key) {
   return L[key];
 }
 
-// ★ 入力テキストから簡易に言語を推定
+// ========= 入力言語の推定まわり =========
+
+// 1) まずはクライアントだけでざっくり判定
 function detectInputLangLocal(str) {
   if (!str) return 'en';
-  // ひらがな・カタカナ・漢字が多ければ日本語
+  // 日本語（ひらがな・カタカナ・漢字）
   if (/[ぁ-んァ-ン一-龥]/.test(str)) return 'ja';
-  // 簡体字/繁体字っぽいなら中国語
+  // 中国語（簡体・繁体）
   if (/[\u4E00-\u9FFF\u3400-\u4DBF\uF900-\uFAFF]/.test(str)) return 'zh';
   // 韓国語
   if (/[\uac00-\ud7af]/.test(str)) return 'ko';
-  // ラテンだけなら英語に寄せる
+  // ラテンのみ → とりあえず英語
   return 'en';
 }
 
-// 入力言語別の “検索中…” 文言
-function searchingTextByInput(str) {
-  const lang = detectInputLangLocal(str);
-  if (lang === 'ja') return '🔎 検索中です…';
-  if (lang === 'zh') return '🔎 正在为你查找…';
-  if (lang === 'ko') return '🔎 검색 중입니다…';
-  // ポルトガル語とかロシア語は英語にフォールバックでOK（要ならここに足せる）
+// 2) ローカルで「en」扱いになったけど実は非ASCIIが混じってるときなどに、BGに聞く
+function detectInputLangSmart(str) {
+  const local = detectInputLangLocal(str);
+
+  // 英語扱いだけど非ASCIIがいる → 他言語の可能性高いのでBGに投げる
+  const hasNonAscii = /[^\u0000-\u00ff]/.test(str);
+  const needsRemote = (local === 'en' && hasNonAscii);
+
+  if (!needsRemote) {
+    return Promise.resolve(local);
+  }
+
+  return new Promise(resolve => {
+    chrome.runtime.sendMessage(
+      { type: 'AIC_DETECT_LANG', text: str },
+      resp => {
+        if (!resp || !resp.ok) {
+          resolve(local);
+          return;
+        }
+        const code = resp.data?.lang_code || local;
+        resolve(code);
+      }
+    );
+  });
+}
+
+// 3) 言語コード → 「検索中…」テキスト
+function searchingTextFromLangCode(code) {
+  if (!code) return '🔎 Searching…';
+  const lc = code.toLowerCase();
+  if (lc.startsWith('ja')) return '🔎 検索中です…';
+  if (lc.startsWith('zh')) return '🔎 正在为你查找…';
+  if (lc.startsWith('ko')) return '🔎 검색 중입니다…';
+  if (lc.startsWith('es')) return '🔎 Buscando…';
+  if (lc.startsWith('pt')) return '🔎 Pesquisando…';
+  if (lc.startsWith('fr')) return '🔎 Recherche en cours…';
+  if (lc.startsWith('de')) return '🔎 Suche läuft…';
+  if (lc.startsWith('ru')) return '🔎 Идёт поиск…';
+  if (lc.startsWith('th')) return '🔎 กำลังค้นหา…';
   return '🔎 Searching…';
 }
 
-// ---- layout ----
+// ========= layout =========
 const PANEL_WIDTH = 320;
 const PANEL_HEIGHT = 420;
 
@@ -139,21 +174,21 @@ const sendBtn = panel.querySelector('#aic-send');
 const voiceBtn = panel.querySelector('#aic-voice');
 const minimizeBtn = panel.querySelector('#aic-minimize');
 
-// パネル内だけスクロール
+// パネル内だけスクロールさせる
 msgBox.addEventListener('wheel', e => {
   const el = msgBox;
   const delta = e.deltaY;
   const atTop = el.scrollTop === 0;
   const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 1;
-  if ((delta < 0 && atTop) || (delta > 0 && atBottom)) return;
+  if ((delta < 0 && atTop) || (delta > 0 && atBottom)) {
+    return;
+  }
   e.preventDefault();
   e.stopPropagation();
   el.scrollTop += delta;
 }, { passive: false });
 
-// 初回メッセージ
-addBotText(t('welcome'));
-
+// ====== message helpers ======
 function addUserBubble(text) {
   const div = document.createElement('div');
   div.style.alignSelf = 'flex-end';
@@ -248,15 +283,19 @@ function addProductCards(items = []) {
   msgBox.scrollTop = msgBox.scrollHeight;
 }
 
+// 初回メッセージ
+addBotText(t('welcome'));
+
 // ====== send ======
-function sendMessage() {
+async function sendMessage() {
   const text = inputEl.value.trim();
   if (!text) return;
   addUserBubble(text);
   inputEl.value = '';
 
-  // ★ 入力言語に合わせた「検索中…」
-  const loading = addBotText(searchingTextByInput(text));
+  // 入力言語をスマートに決めて、その言語で「検索中…」
+  const langCode = await detectInputLangSmart(text);
+  const loading = addBotText(searchingTextFromLangCode(langCode));
 
   chrome.runtime.sendMessage(
     {
@@ -282,7 +321,7 @@ function sendMessage() {
   );
 }
 
-sendBtn.addEventListener('click', sendMessage);
+sendBtn.addEventListener('click', () => { sendMessage(); });
 inputEl.addEventListener('keydown', e => {
   if (e.key === 'Enter') sendMessage();
 });
@@ -308,6 +347,7 @@ async function startVoiceCapture() {
     const chunks = [];
     rec.ondataavailable = e => chunks.push(e.data);
     rec.start();
+
     await new Promise(r => setTimeout(r, 3500));
     rec.stop();
     await new Promise(r => rec.onstop = r);
@@ -315,6 +355,7 @@ async function startVoiceCapture() {
 
     const blob = new Blob(chunks, { type: 'audio/webm' });
 
+    // Blob → base64
     const audioBase64 = await new Promise((resolve, reject) => {
       const fr = new FileReader();
       fr.onload = () => {
@@ -330,6 +371,7 @@ async function startVoiceCapture() {
       return;
     }
 
+    // STT に送る
     const sttResp = await fetch('https://ergonomics-mu.vercel.app/api/stt', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -341,12 +383,15 @@ async function startVoiceCapture() {
       return;
     }
 
+    // 認識結果を画面に
     inputEl.value = stt.text;
     addUserBubble(stt.text);
 
-    // 音声でも「検索中…」を入力言語で出す
-    const loading = addBotText(searchingTextByInput(stt.text));
+    // 認識結果の言語で「検索中…」
+    const langCode = await detectInputLangSmart(stt.text);
+    const loading = addBotText(searchingTextFromLangCode(langCode));
 
+    // 文字起こしをそのまま送る
     chrome.runtime.sendMessage(
       {
         type: 'AI_CHAT',
