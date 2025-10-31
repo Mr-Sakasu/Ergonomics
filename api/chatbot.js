@@ -5,7 +5,11 @@ const OPENAI_API_BASE = process.env.OPENAI_API_BASE || 'https://api.openai.com';
 async function readJson(req) {
     let body = '';
     for await (const chunk of req) body += chunk;
-    try { return JSON.parse(body || '{}'); } catch { return {}; }
+    try {
+        return JSON.parse(body || '{}');
+    } catch {
+        return {};
+    }
 }
 
 function localeMsg(lang, key) {
@@ -58,12 +62,18 @@ If siteHost seems e-commerce, generate queries focused on that site (e.g., inclu
             ]
         })
     });
+
     const j = await resp.json();
     if (!resp.ok) throw new Error(j?.error?.message || 'openai error');
 
     let obj = {};
-    try { obj = JSON.parse(j.choices?.[0]?.message?.content || '{}'); } catch { }
-    const queries = Array.isArray(obj.queries) ? obj.queries.slice(0, 3) : [text].filter(Boolean);
+    try {
+        obj = JSON.parse(j.choices?.[0]?.message?.content || '{}');
+    } catch { }
+    const queries = Array.isArray(obj.queries)
+        ? obj.queries.slice(0, 3)
+        : [text].filter(Boolean);
+
     return { reply_text: obj.reply_text, queries };
 }
 
@@ -73,36 +83,47 @@ module.exports = async (req, res) => {
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     if (req.method === 'OPTIONS') return res.status(200).end();
-    if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'Method not allowed' });
+    if (req.method !== 'POST')
+        return res.status(405).json({ ok: false, error: 'Method not allowed' });
 
     try {
         const { text = '', lang = 'ja-JP', siteHost = '' } = await readJson(req);
 
-        // 1) LLMで検索クエリを作成（site-aware）
+        // 1) LLMで検索クエリを作成
         const qgen = await llmQueryGen(text, lang, siteHost);
 
-        // 2) /api/shop にクエリを1〜3回投げて結合（重複は先頭優先）
+        // 2) /api/shop を叩く
         const itemsAll = [];
-        // 自分自身の完全URLを作る（Vercel / ローカル両対応）
-            const baseURL =
-                  (process.env.VERCEL_URL && `https://${process.env.VERCEL_URL}`) ||
-                  (req.headers.host && `https://${req.headers.host}`) ||
-                  '';
-            for (const q of qgen.queries) {
-                const r = await fetch(`${baseURL}/api/shop`, {
-                    method: 'POST',  
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ query: q, siteHost, lang })
-            }).catch(() => null);
+        const SHOP_BASE = process.env.SHOP_BASE || 'https://ergonomics-mu.vercel.app';
 
-            const j = r ? await r.json().catch(() => null) : null;
+        for (const q of qgen.queries) {
+            let j = null;
+            try {
+                const r = await fetch(`${SHOP_BASE}/api/shop`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                        // 必要ならここに認証ヘッダを追加:
+                        // 'x-internal-token': process.env.INTERNAL_TOKEN
+                    },
+                    body: JSON.stringify({ query: q, siteHost, lang })
+                });
+                j = await r.json().catch(() => null);
+            } catch (err) {
+                // ここで1回の失敗は無視して次のクエリへ
+                j = null;
+            }
+
             if (j?.ok && Array.isArray(j.items)) {
                 for (const it of j.items) {
                     const key = (it.title || '') + (it.url || '');
-                    if (!itemsAll.find(x => (x.title || '') + (x.url || '') === key)) itemsAll.push(it);
+                    if (!itemsAll.find(x => (x.title || '') + (x.url || '') === key)) {
+                        itemsAll.push(it);
+                    }
                     if (itemsAll.length >= 6) break;
                 }
             }
+
             if (itemsAll.length >= 6) break;
         }
 
@@ -113,13 +134,23 @@ module.exports = async (req, res) => {
             ok: true,
             reply_lang: lang,
             messages: [
-                { role: 'assistant', type: 'text', content: qgen.reply_text || localeMsg(lang, 'here') },
+                {
+                    role: 'assistant',
+                    type: 'text',
+                    content: qgen.reply_text || localeMsg(lang, 'here')
+                },
                 { role: 'assistant', type: 'products', items: top },
                 { role: 'assistant', type: 'text', content: localeMsg(lang, 'refine') }
             ]
         });
     } catch (e) {
         console.error('[chatbot] error', e);
-        return res.status(200).json({ ok: false, error: String(e) });
+        return res
+            .status(200)
+            .json({
+                ok: false, error: String(e), messages: [
+                    { role: 'assistant', type: 'text', content: 'すみません、内部エラーが起きました。' }
+                ]
+            });
     }
 };
