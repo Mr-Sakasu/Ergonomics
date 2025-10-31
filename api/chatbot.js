@@ -89,9 +89,10 @@ module.exports = async (req, res) => {
                   (req.headers.host && `https://${req.headers.host}`) ||
                   '';
             for (const q of qgen.queries) {
-                  const r = await fetch(`${baseURL}/api/shop`, {
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ query: q, siteHost, lang })
+                const r = await fetch(`${baseURL}/api/shop`, {
+                    method: 'POST',  
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query: q, siteHost, lang })
             }).catch(() => null);
 
             const j = r ? await r.json().catch(() => null) : null;
