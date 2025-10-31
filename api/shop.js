@@ -77,7 +77,10 @@ module.exports = async (req, res) => {
 
     try {
         const items = await searchSerpApi({ q, country, gl, hl });
-        return res.status(200).json({ ok: true, items, provider: 'serpapi', siteHost, isEC });
+        if (!items || items.length === 0) {
+            console.warn('[shop] empty results for q=', q);
+        }
+        return res.status(200).json({ ok: true, items, provider: 'serpapi', siteHost, isEC, q });
     } catch (e) {
         console.error('[shop] error', e);
         return res.status(200).json({ ok: false, error: String(e) });
