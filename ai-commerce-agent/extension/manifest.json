@@ -1,15 +1,19 @@
 {
   "manifest_version": 3,
   "name": "E-commerce × AI",
-  "version": "1.0.3",
+  "version": "1.0.5",
   "description": "AI-Powered E-commerce",
   "permissions": [
     "activeTab",
     "scripting",
-    "sidePanel"
+    "sidePanel",
+    "tabs"
   ],
   "host_permissions": [
-    "https://ergonomics-mu.vercel.app/*"
+    "https://ergonomics-mu.vercel.app/*",
+    "https://jd.com/*",
+    "https://*.jd.com/*",
+    "https://p.3.cn/*"
   ],
   "background": {
     "service_worker": "background.js"

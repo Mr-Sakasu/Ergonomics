@@ -50,27 +50,12 @@ function toBcp47(base = "en") {
 function getUiStrings(langCode = "en-US") {
     const b = langBase(langCode);
     if (b === "ja") return {
-        found: "以下が見つかりました。",
-        other: "このサイトでは見つかりませんでしたが、他のECから候補を表示します。",
-        notFound: "すみません、今回は見つかりませんでした。もう少しキーワードや条件を入れてください。",
         refine: "価格帯・ブランド・用途を言ってくれればさらに絞れます。"
     };
     if (b === "zh") return {
-        found: "找到了以下商品。",
-        other: "当前站点没找到，我从其他平台给你找了一些。",
-        notFound: "这次没有找到，请再补充一点关键词或条件。",
         refine: "说下预算/品牌/用途，我可以再筛选。"
     };
-    if (b === "ko") return {
-        found: "다음 상품을 찾았어요.",
-        other: "이 사이트에서는 못 찾았지만, 다른 소스에서 후보를 찾아봤어요.",
-        notFound: "이번에는 찾지 못했어요. 키워드/조건을 조금 더 추가해 주세요.",
-        refine: "예산/브랜드/용도를 알려주면 더 좁혀볼게요."
-    };
     return {
-        found: "Here are the products I found.",
-        other: "Not found on this site, but here are options from other sources.",
-        notFound: "I couldn’t find it this time. Please add more keywords or constraints.",
         refine: "Tell me budget/brand/use case to refine."
     };
 }
@@ -87,24 +72,6 @@ function isJdHost(host = "") {
 function looksLikeJDQuery(text = "") {
     const s = String(text || "");
     return /(^|\b)jd(\b|$)|京东|京東|jingdong/i.test(s);
-}
-
-function buildSiteSearchUrl(host, q) {
-    const h = (host || "").toLowerCase();
-    const enc = encodeURIComponent(q);
-    if (h.includes("jd.com")) return `https://search.jd.com/Search?keyword=${enc}`;
-    if (h.includes("amazon.")) return `https://${host}/s?k=${enc}`;
-    if (h.includes("rakuten.")) return `https://${host}/search/mall/${enc}/`;
-    return host ? `https://${host}/search?q=${enc}` : `https://www.google.com/search?q=${enc}`;
-}
-
-function resolveBaseUrl(req) {
-    if (process.env.SHOP_BASE) return process.env.SHOP_BASE;
-    if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
-    const proto = (req?.headers?.["x-forwarded-proto"] || "https").split(",")[0].trim();
-    const host = req?.headers?.host || "";
-    if (host) return `${proto}://${host}`;
-    return "https://ergonomics-mu.vercel.app";
 }
 
 async function openaiJson(messages, timeoutMs = 9000) {
@@ -137,7 +104,6 @@ async function openaiJson(messages, timeoutMs = 9000) {
 
 async function generateMultiQueries({ userText, pageContext, userLang, siteLang, siteHost }) {
     if (!OPENAI_API_KEY) {
-        // fallback: no OpenAI
         return [
             { q: userText, lang: siteLang || userLang || "en-US" },
             { q: userText, lang: userLang || "en-US" },
@@ -152,9 +118,11 @@ Return EXACT JSON:
 
 Rules:
 - First query MUST be optimized for site language.
+- If site language is zh-CN (JD), the first query should be a SHORT simplified-Chinese shopping keyword
+  (no punctuation, no explanations, no brand/spec invention, keep it concise).
 - Second query MUST be user language.
 - Third query MUST be English.
-- Optional: shorter/more generic.
+- Optional: even shorter/generic.
 - Do NOT invent brands/specs.
 - Use PageContext only if user request refers to it (e.g., "this", "same as this page").
 `;
@@ -197,25 +165,6 @@ ${ctx || "(none)"}
     ];
 }
 
-async function tryShopSearch({ baseUrl, queries, siteHost, provider, timeoutMs = 6500, maxTries = 5 }) {
-    for (const { q, lang } of queries.slice(0, maxTries)) {
-        try {
-            const r = await fetchWithTimeout(
-                `${baseUrl}/api/shop`,
-                {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ query: q, siteHost: siteHost || "", lang: lang || "en-US", provider: provider || "" })
-                },
-                timeoutMs
-            );
-            const j = await r.json().catch(() => null);
-            if (j?.ok && Array.isArray(j.items) && j.items.length > 0) return { items: j.items, queryUsed: q };
-        } catch { }
-    }
-    return { items: [], queryUsed: "" };
-}
-
 module.exports = async (req, res) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
@@ -225,7 +174,7 @@ module.exports = async (req, res) => {
     if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
 
     try {
-        const { text = "", lang = "", siteHost = "", provider = "" } = await readJson(req);
+        const { text = "", lang = "", siteHost = "", provider = "", clientScrape = false } = await readJson(req);
 
         const { userText, pageContext } = splitUserAndContext(text);
         const safeUserText = String(userText).slice(0, 2000);
@@ -243,8 +192,6 @@ module.exports = async (req, res) => {
         const ui = getUiStrings(userLang);
         const siteLang = isJDMode ? "zh-CN" : userLang;
 
-        const baseUrl = resolveBaseUrl(req);
-
         const queries = await generateMultiQueries({
             userText: safeUserText,
             pageContext: safeContext,
@@ -253,67 +200,40 @@ module.exports = async (req, res) => {
             siteHost: host
         });
 
-        let foundItems = [];
-        let foundFrom = "";
+        const keywordZh =
+            String(
+                queries.find(q => String(q?.lang || "").toLowerCase().startsWith("zh"))?.q ||
+                queries[0]?.q ||
+                safeUserText
+            ).trim();
 
-        // 1) Try site/JD first
-        if (host || isJDMode) {
-            const r1 = await tryShopSearch({
-                baseUrl,
-                queries,
-                siteHost: host,
+        // ★ ここが重要：拡張機能側でスクレイピングする場合、サーバ側は「クエリ生成だけ」返す
+        if (clientScrape) {
+            return res.status(200).json({
+                ok: true,
+                reply_lang: userLang,
                 provider: isJDMode ? "jd" : providerNorm,
-                maxTries: isJDMode ? 4 : 5
-            });
-            foundItems = r1.items || [];
-            if (foundItems.length) foundFrom = "site";
-        }
-
-        // 2) Global fallback only if NOT JD mode
-        if (!isJDMode && foundItems.length === 0) {
-            const r2 = await tryShopSearch({
-                baseUrl,
+                site_host: host,
+                keyword_zh: keywordZh,
                 queries,
-                siteHost: "",
-                provider: "",
-                maxTries: 5
+                messages: [
+                    { role: "assistant", type: "text", content: ui.refine }
+                ]
             });
-            foundItems = r2.items || [];
-            if (foundItems.length) foundFrom = "global";
         }
 
-        const messages = [];
-
-        if (foundItems.length) {
-            messages.push({ role: "assistant", type: "text", content: foundFrom === "site" ? ui.found : ui.other });
-            messages.push({ role: "assistant", type: "products", items: foundItems.slice(0, 6) });
-            messages.push({ role: "assistant", type: "text", content: ui.refine });
-        } else {
-            messages.push({ role: "assistant", type: "text", content: ui.notFound });
-
-            const hostForLink = isJDMode ? "jd.com" : host;
-            if (hostForLink) {
-                messages.push({
-                    role: "assistant",
-                    type: "products",
-                    items: [{
-                        title: base === "ja"
-                            ? `${hostForLink} で「${safeUserText}」を検索`
-                            : base === "zh"
-                                ? `在 ${hostForLink} 上搜索「${safeUserText}」`
-                                : `Search “${safeUserText}” on ${hostForLink}`,
-                        url: buildSiteSearchUrl(hostForLink, safeUserText),
-                        price: "",
-                        image: "",
-                        source: hostForLink
-                    }]
-                });
-            }
-
-            messages.push({ role: "assistant", type: "text", content: ui.refine });
-        }
-
-        return res.status(200).json({ ok: true, reply_lang: userLang, messages });
+        // （互換性のため）従来どおりサーバスクレイピングを使いたい場合はここに残せます
+        return res.status(200).json({
+            ok: true,
+            reply_lang: userLang,
+            provider: isJDMode ? "jd" : providerNorm,
+            site_host: host,
+            keyword_zh: keywordZh,
+            queries,
+            messages: [
+                { role: "assistant", type: "text", content: ui.refine }
+            ]
+        });
     } catch (e) {
         console.error("[chatbot] error", e);
         return res.status(200).json({ ok: false, error: String(e) });
