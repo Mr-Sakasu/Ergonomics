@@ -1,4 +1,3 @@
-// extension/background.js
 console.log('[AIC] BG loaded');
 
 const API_BASE = 'https://ergonomics-mu.vercel.app/api';
@@ -9,22 +8,45 @@ function fetchWithTimeout(url, options = {}, ms = DEFAULT_TIMEOUT_MS) {
     const id = setTimeout(() => ctrl.abort(), ms);
     return fetch(url, { ...options, signal: ctrl.signal }).finally(() => clearTimeout(id));
 }
-
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function normalizeScriptErrorMessage(msg = '') {
-    const s = String(msg || '');
-    if (s.includes('Cannot access a chrome:// URL')) return 'restricted_chrome_url';
-    if (s.includes('The extensions gallery cannot be scripted')) return 'restricted_webstore';
-    if (s.includes('Cannot access contents of the page')) return 'cannot_access_page';
-    if (s.includes('Extension manifest must request permission')) return 'missing_host_permission';
-    return s || 'unknown_error';
+function langBase(lang = '') {
+    const s = String(lang || '').toLowerCase();
+    return s.split(/[-_]/)[0] || 'en';
+}
+function uiStrings(userLang = 'en-US') {
+    const b = langBase(userLang);
+    if (b === 'ja') return {
+        found: '以下が見つかりました。',
+        notFound: 'すみません、今回は見つかりませんでした。キーワードや条件を少し変えてみてください。',
+        blocked: 'JD側で検証が出た可能性があります。JDのページで一度検証してからもう一度試してください。',
+        refine: '予算・ブランド・用途を言ってくれればさらに絞れます。',
+        openSearch: 'JDで検索を開く',
+        errNetwork: '通信に失敗しました（サーバー/ネットワーク）。',
+    };
+    if (b === 'zh') return {
+        found: '找到了以下商品。',
+        notFound: '这次没有找到，请再补充一点关键词或条件。',
+        blocked: '京东可能触发了验证。请先在京东页面完成验证后再试一次。',
+        refine: '说下预算/品牌/用途，我可以再筛选。',
+        openSearch: '打开京东搜索',
+        errNetwork: '网络/服务端请求失败。',
+    };
+    return {
+        found: 'Here are the products I found.',
+        notFound: 'I couldn’t find it this time. Please add more keywords or constraints.',
+        blocked: 'JD may have shown a verification step. Please open JD, complete verification, then try again.',
+        refine: 'Tell me budget/brand/use case to refine.',
+        openSearch: 'Open JD search',
+        errNetwork: 'Network/server request failed.',
+    };
 }
 
-// ---- Promisify chrome.* (安定動作用) ----
-function pTabsQuery(queryInfo) {
-    return new Promise((resolve) => chrome.tabs.query(queryInfo, (tabs) => resolve(tabs || [])));
+function buildJdSearchUrl(q) {
+    return `https://search.jd.com/Search?keyword=${encodeURIComponent(q)}&enc=utf-8`;
 }
+
+// ---- Promisify chrome.* ----
 function pTabsCreate(createProperties) {
     return new Promise((resolve, reject) => {
         chrome.tabs.create(createProperties, (tab) => {
@@ -37,6 +59,15 @@ function pTabsCreate(createProperties) {
 function pTabsRemove(tabId) {
     return new Promise((resolve) => chrome.tabs.remove(tabId, () => resolve()));
 }
+function pTabsGet(tabId) {
+    return new Promise((resolve, reject) => {
+        chrome.tabs.get(tabId, (tab) => {
+            const err = chrome.runtime.lastError;
+            if (err) reject(err);
+            else resolve(tab);
+        });
+    });
+}
 function pExecuteScript(details) {
     return new Promise((resolve, reject) => {
         chrome.scripting.executeScript(details, (results) => {
@@ -47,7 +78,13 @@ function pExecuteScript(details) {
     });
 }
 
-async function waitTabComplete(tabId, timeoutMs = 14000) {
+async function waitTabComplete(tabId, timeoutMs = 20000) {
+    // 先に現在状態を確認（race対策）
+    try {
+        const t = await pTabsGet(tabId);
+        if (t?.status === 'complete') return true;
+    } catch (_) { }
+
     return await new Promise((resolve, reject) => {
         const t = setTimeout(() => {
             cleanup();
@@ -71,38 +108,35 @@ async function waitTabComplete(tabId, timeoutMs = 14000) {
     });
 }
 
-function langBase(lang = '') {
-    const s = String(lang || '').toLowerCase();
-    return s.split(/[-_]/)[0] || 'en';
-}
-function uiStrings(userLang = 'en-US') {
-    const b = langBase(userLang);
-    if (b === 'ja') return {
-        found: '以下が見つかりました。',
-        notFound: 'すみません、今回は見つかりませんでした。キーワードや条件を少し変えてみてください。',
-        blocked: 'JD側で検証が出た可能性があります。JDのページで一度検索/検証してからもう一度試してください。',
-        refine: '予算・ブランド・用途を言ってくれればさらに絞れます。',
-        openSearch: 'JDで検索を開く',
-    };
-    if (b === 'zh') return {
-        found: '找到了以下商品。',
-        notFound: '这次没有找到，请再补充一点关键词或条件。',
-        blocked: '京东可能触发了验证。请先在京东页面完成验证后再试一次。',
-        refine: '说下预算/品牌/用途，我可以再筛选。',
-        openSearch: '打开京东搜索',
-    };
-    return {
-        found: 'Here are the products I found.',
-        notFound: 'I couldn’t find it this time. Please add more keywords or constraints.',
-        blocked: 'JD may have shown a verification step. Please open JD, complete verification, then try again.',
-        refine: 'Tell me budget/brand/use case to refine.',
-        openSearch: 'Open JD search',
-    };
+async function waitForJdResults(tabId, timeoutMs = 12000) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+        const rs = await pExecuteScript({
+            target: { tabId },
+            func: () => {
+                const bodyText = (document.body?.innerText || '').slice(0, 2000);
+
+                const blocked =
+                    /验证|安全验证|captcha|访问过于频繁/i.test(bodyText) &&
+                    !document.querySelector('#J_goodsList') &&
+                    document.querySelectorAll('[data-sku]').length === 0;
+
+                const oldCount = document.querySelectorAll('#J_goodsList li.gl-item').length;
+                const newCount = document.querySelectorAll('[data-sku]').length; // ← 新DOM用
+
+                return { blocked, count: oldCount + newCount };
+            },
+        }).catch(() => null);
+
+        const r0 = rs?.[0]?.result;
+        if (r0?.blocked) return { blocked: true, ready: false };
+        if ((r0?.count || 0) > 0) return { blocked: false, ready: true };
+
+        await sleep(400);
+    }
+    return { blocked: false, ready: false };
 }
 
-function buildJdSearchUrl(q) {
-    return `https://search.jd.com/Search?keyword=${encodeURIComponent(q)}&enc=utf-8`;
-}
 
 async function fetchJdPrices(skus = []) {
     const list = (skus || []).filter(Boolean).slice(0, 20);
@@ -142,8 +176,12 @@ async function scrapeJdSearchOnce(query, limit = 6) {
     const tab = await pTabsCreate({ url, active: false });
 
     try {
-        await waitTabComplete(tab.id, 14000);
-        await sleep(700);
+        await waitTabComplete(tab.id, 20000);
+
+        const w = await waitForJdResults(tab.id, 12000);
+        if (w.blocked) return { ok: true, blocked: true, items: [] };
+
+        await sleep(500);
 
         const results = await pExecuteScript({
             target: { tabId: tab.id },
@@ -155,48 +193,102 @@ async function scrapeJdSearchOnce(query, limit = 6) {
                     if (!s) return '';
                     if (s.startsWith('//')) return `https:${s}`;
                     if (s.startsWith('http://') || s.startsWith('https://')) return s;
-                    if (s.startsWith('/')) return `https://item.jd.com${s}`;
                     return s;
                 };
 
                 const bodyText = (document.body?.innerText || '').slice(0, 2000);
                 const blocked =
                     /验证|安全验证|captcha|访问过于频繁/i.test(bodyText) &&
-                    !document.querySelector('#J_goodsList');
+                    !document.querySelector('#J_goodsList') &&
+                    document.querySelectorAll('[data-sku]').length === 0;
+
+                // ---- 1) 旧DOM（従来） ----
+                const oldNodes = Array.from(document.querySelectorAll('#J_goodsList li.gl-item'));
+
+                // ---- 2) 新DOM（data-skuベース） ----
+                // 画像・タイトルがある“それっぽいカード”だけに絞る
+                const newNodesAll = Array.from(document.querySelectorAll('[data-sku]'));
+                const newNodes = newNodesAll.filter((el) => {
+                    const sku = clean(el.getAttribute('data-sku'));
+                    if (!sku) return false;
+                    const hasImg = !!el.querySelector('img');
+                    const hasTitle = !!(el.querySelector('span[title]') || el.querySelector('[title]'));
+                    return hasImg && hasTitle;
+                });
+
+                const nodes = oldNodes.length ? oldNodes : newNodes;
 
                 const raw = [];
-                const nodes = Array.from(document.querySelectorAll('#J_goodsList li.gl-item'));
-                for (const li of nodes) {
-                    if (raw.length >= LIMIT * 3) break;
+                for (const node of nodes) {
+                    if (raw.length >= LIMIT * 4) break;
 
-                    const sku = clean(li.getAttribute('data-sku'));
-                    const title =
-                        clean(li.querySelector('.p-name em')?.textContent) ||
-                        clean(li.querySelector('.p-name')?.textContent);
+                    const sku = clean(node.getAttribute('data-sku'));
+                    if (!sku) continue;
 
-                    const a = li.querySelector('.p-name a');
-                    const itemUrl = normUrl(a?.getAttribute('href'));
+                    let title = '';
+                    let itemUrl = '';
+                    let imgUrl = '';
+                    let priceText = '';
+                    let shopName = '';
+                    let badge = '';
 
-                    const img = li.querySelector('.p-img img');
-                    const imgUrl = normUrl(
-                        img?.getAttribute('data-lazy-img') ||
-                        img?.getAttribute('data-lazy-img-slave') ||
-                        img?.getAttribute('src')
-                    );
+                    const isOld = node.matches('li.gl-item') || !!node.querySelector('.p-name');
 
-                    const priceText = clean(li.querySelector('.p-price i')?.textContent);
-                    const shopName = clean(li.querySelector('.p-shop a')?.textContent);
-                    const badge = clean(li.querySelector('.p-icons i')?.textContent);
+                    if (isOld) {
+                        title =
+                            clean(node.querySelector('.p-name em')?.textContent) ||
+                            clean(node.querySelector('.p-name')?.textContent);
+
+                        const a = node.querySelector('.p-name a');
+                        itemUrl = normUrl(a?.getAttribute('href'));
+
+                        const img = node.querySelector('.p-img img');
+                        imgUrl = normUrl(
+                            img?.getAttribute('data-lazy-img') ||
+                            img?.getAttribute('data-lazy-img-slave') ||
+                            img?.getAttribute('src')
+                        );
+
+                        priceText = clean(node.querySelector('.p-price i')?.textContent);
+                        shopName = clean(node.querySelector('.p-shop a')?.textContent);
+                        badge = clean(node.querySelector('.p-icons i')?.textContent);
+                    } else {
+                        // ---- 新DOM（あなたのスクショの構造） ----
+                        title =
+                            clean(node.querySelector('span[title]')?.getAttribute('title')) ||
+                            clean(node.querySelector('[title]')?.getAttribute('title')) ||
+                            clean(node.textContent).slice(0, 80);
+
+                        const img = node.querySelector('img');
+                        imgUrl = normUrl(
+                            img?.getAttribute('data-src') ||
+                            img?.getAttribute('src') ||
+                            img?.getAttribute('data-lazy-img')
+                        );
+
+                        // aタグが無い場合が多いのでSKUから構築
+                        const a = node.querySelector('a[href]');
+                        const href = normUrl(a?.getAttribute('href'));
+                        itemUrl = href && href.includes('jd.com') ? href : `https://item.jd.com/${sku}.html`;
+
+                        // 価格はDOMに無い/遅延なことが多い → 後段で p.3.cn を使う
+                        priceText = '';
+
+                        shopName = '';
+                        badge = '';
+                    }
+
+                    if (!title) continue;
 
                     raw.push({ sku, title, url: itemUrl, image: imgUrl, priceText, shopName, badge });
                 }
 
+                // SKUで重複除去
                 const seen = new Set();
                 const items = [];
                 for (const it of raw) {
-                    const key = it.sku ? `sku:${it.sku}` : `url:${it.url}`;
-                    if (!it.title || !it.url || seen.has(key)) continue;
-                    seen.add(key);
+                    if (!it.sku || seen.has(it.sku)) continue;
+                    seen.add(it.sku);
                     items.push(it);
                     if (items.length >= LIMIT) break;
                 }
@@ -206,10 +298,12 @@ async function scrapeJdSearchOnce(query, limit = 6) {
         });
 
         const r0 = results?.[0]?.result || { blocked: false, items: [] };
-        const items0 = Array.isArray(r0.items) ? r0.items : [];
-        const blocked = !!r0.blocked;
+        if (r0.blocked) return { ok: true, blocked: true, items: [] };
 
-        const skusNeed = items0.filter((it) => it?.sku && !it?.priceText).map((it) => it.sku);
+        const items0 = Array.isArray(r0.items) ? r0.items : [];
+
+        // 価格が無いSKUは p.3.cn で埋める
+        const skusNeed = items0.map((it) => it.sku).filter(Boolean);
         const priceMap = await fetchJdPrices(skusNeed);
 
         const out = items0.map((it) => {
@@ -226,7 +320,7 @@ async function scrapeJdSearchOnce(query, limit = 6) {
             };
         });
 
-        return { ok: true, blocked, items: out };
+        return { ok: true, blocked: false, items: out };
     } finally {
         try { await pTabsRemove(tab.id); } catch (_) { }
     }
@@ -267,30 +361,37 @@ async function scrapeJdWithQueries(queries, fallbackText) {
 }
 
 async function handleAiChat(payload = {}) {
-    // 1) サーバに「中国語検索キーワード生成」だけ依頼
-    const r = await fetchWithTimeout(`${API_BASE}/chatbot`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...(payload || {}), clientScrape: true }),
-    }, 12000);
-
-    const data = await r.json().catch(() => null);
-    if (!data || data.ok === false) {
-        return { ok: true, data: { ok: false, error: data?.error || 'chatbot_error' } };
-    }
-
-    const replyLang = data.reply_lang || payload.lang || 'en-US';
+    const text = String(payload.text || '').trim();
+    const replyLang = payload.lang || 'ja-JP';
     const ui = uiStrings(replyLang);
 
-    const provider = String(data.provider || payload.provider || '').toLowerCase();
-    const isJdMode = provider === 'jd' || String(payload.siteHost || '').includes('jd.com');
+    // server: 中国語検索クエリ生成（失敗しても UI を沈黙させない）
+    let data = null;
+    try {
+        const r = await fetchWithTimeout(
+            `${API_BASE}/chatbot`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ...(payload || {}), clientScrape: true }),
+            },
+            12000
+        );
+        data = await r.json().catch(() => null);
+    } catch (_) {
+        data = null;
+    }
 
-    if (isJdMode) {
-        const queries = data.queries || [];
-        const fallbackText = String(payload.text || '').split('[PageContext]')[0]?.trim() || '';
+    const provider = String(payload.provider || data?.provider || 'jd').toLowerCase();
+    const queries = data?.queries || [];
+    const fallbackText = text;
+
+    // JD固定
+    if (provider === 'jd') {
         const usedQ = pickZhQuery(queries, fallbackText);
-
+        console.log('[AIC] JD scrape start', { queries: data?.queries, text: payload.text });
         const s = await scrapeJdWithQueries(queries, fallbackText);
+        console.log('[AIC] JD scrape done', { ok: s.ok, blocked: s.blocked, usedQuery: s.usedQuery, n: s.items?.length });
 
         if (s.blocked) {
             return {
@@ -325,19 +426,21 @@ async function handleAiChat(payload = {}) {
                     messages: [
                         { role: 'assistant', type: 'text', content: `${ui.found}\n(JD keyword: ${s.usedQuery})` },
                         { role: 'assistant', type: 'products', items: s.items.slice(0, 6) },
-                        { role: 'assistant', type: 'text', content: ui.refine },
+                        { role: 'assistant', type: 'text', content: ui.refine }
                     ]
                 }
             };
         }
 
+        // サーバが死んでる/何も見つからない → 最低限 JD検索リンクを出す
+        const head = data ? ui.notFound : ui.errNetwork;
         return {
             ok: true,
             data: {
                 ok: true,
                 reply_lang: replyLang,
                 messages: [
-                    { role: 'assistant', type: 'text', content: ui.notFound },
+                    { role: 'assistant', type: 'text', content: head },
                     {
                         role: 'assistant',
                         type: 'products',
@@ -349,25 +452,39 @@ async function handleAiChat(payload = {}) {
                             source: 'JD'
                         }]
                     },
-                    { role: 'assistant', type: 'text', content: ui.refine },
+                    { role: 'assistant', type: 'text', content: ui.refine }
                 ]
             }
         };
     }
 
-    // JD以外は（今は）サーバ結果をそのまま返す/無ければNotFound
-    if (Array.isArray(data.messages)) return { ok: true, data };
-    return { ok: true, data: { ok: true, reply_lang: replyLang, messages: [{ role: 'assistant', type: 'text', content: ui.notFound }] } };
+    // JD以外（今は未対応）
+    return {
+        ok: true,
+        data: {
+            ok: true,
+            reply_lang: replyLang,
+            messages: [{ role: 'assistant', type: 'text', content: ui.notFound }]
+        }
+    };
 }
 
 async function handleStt(payload = {}) {
-    const r = await fetchWithTimeout(`${API_BASE}/stt`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload || {}),
-    }, 20000);
-    const data = await r.json().catch(() => null);
-    return { ok: true, data: data || { ok: false, error: 'stt_error' } };
+    try {
+        const r = await fetchWithTimeout(
+            `${API_BASE}/stt`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload || {}),
+            },
+            20000
+        );
+        const data = await r.json().catch(() => null);
+        return { ok: true, data: data || { ok: false, error: 'stt_error' } };
+    } catch (e) {
+        return { ok: true, data: { ok: false, error: String(e?.name || e) } };
+    }
 }
 
 // side panel open behavior
@@ -380,13 +497,6 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (!msg || !msg.type) return;
 
-    // Voice: forward injected result to all extension contexts
-    if (msg.type === 'AIC_VOICE_RESULT') {
-        if (msg._forwarded) return;
-        chrome.runtime.sendMessage({ ...msg, _forwarded: true });
-        return;
-    }
-
     (async () => {
         if (msg.type === 'AI_CHAT') {
             const out = await handleAiChat(msg.payload || {});
@@ -397,151 +507,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (msg.type === 'AIC_STT') {
             const out = await handleStt(msg.payload || {});
             sendResponse(out);
-            return;
-        }
-
-        // 既存: lang detect（必要なら）
-        if (msg.type === 'AIC_DETECT_LANG') {
-            const r = await fetchWithTimeout(`${API_BASE}/lang-detect`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text: msg.text || '' }),
-            }, 8000);
-            const data = await r.json().catch(() => null);
-            sendResponse({ ok: true, data });
-            return;
-        }
-
-        // 既存: voice start/stop（そのまま）
-        if (msg.type === 'AIC_VOICE_START') {
-            const { tabId, maxMs = 6000, sessionId = '' } = msg.payload || {};
-            if (!tabId) { sendResponse({ ok: false, error: 'tabId_missing' }); return; }
-
-            chrome.scripting.executeScript(
-                {
-                    target: { tabId },
-                    args: [Number(maxMs || 6000), String(sessionId || '')],
-                    func: async (MAX_MS, SESSION) => {
-                        const sendResult = (payload) => {
-                            try {
-                                chrome.runtime.sendMessage({
-                                    type: 'AIC_VOICE_RESULT',
-                                    sessionId: SESSION,
-                                    siteHost: location.hostname || '',
-                                    pageUrl: location.href || '',
-                                    title: document.title || '',
-                                    ...payload,
-                                });
-                            } catch (_) { }
-                        };
-
-                        const blobToBase64 = async (blob) =>
-                            await new Promise((resolve, reject) => {
-                                const fr = new FileReader();
-                                fr.onload = () => resolve(String(fr.result).split(',')[1] || '');
-                                fr.onerror = reject;
-                                fr.readAsDataURL(blob);
-                            });
-
-                        const cleanup = () => {
-                            try {
-                                if (globalThis.__aicVoice?.stream) {
-                                    globalThis.__aicVoice.stream.getTracks().forEach((t) => t.stop());
-                                }
-                            } catch (_) { }
-                            globalThis.__aicVoice = null;
-                        };
-
-                        if (globalThis.__aicVoice && globalThis.__aicVoice.state === 'recording') {
-                            return { ok: true, already: true };
-                        }
-
-                        try {
-                            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                            const recorder = new MediaRecorder(stream);
-                            const chunks = [];
-
-                            globalThis.__aicVoice = {
-                                state: 'recording',
-                                recorder,
-                                stream,
-                                stop: () => {
-                                    try { if (recorder.state === 'recording') recorder.stop(); } catch (_) { }
-                                },
-                            };
-
-                            recorder.ondataavailable = (ev) => {
-                                if (ev.data && ev.data.size > 0) chunks.push(ev.data);
-                            };
-
-                            recorder.onerror = () => {
-                                sendResult({ ok: false, error: 'recorder_error' });
-                                cleanup();
-                            };
-
-                            recorder.onstop = async () => {
-                                try {
-                                    const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
-                                    const audioBase64 = await blobToBase64(blob);
-                                    sendResult({ ok: true, audioBase64, mimeType: blob.type || 'audio/webm' });
-                                } catch (e) {
-                                    sendResult({ ok: false, error: String(e?.name || e) });
-                                } finally {
-                                    cleanup();
-                                }
-                            };
-
-                            recorder.start();
-                            setTimeout(() => {
-                                try { if (globalThis.__aicVoice?.recorder?.state === 'recording') globalThis.__aicVoice.stop(); } catch (_) { }
-                            }, MAX_MS);
-
-                            return { ok: true };
-                        } catch (e) {
-                            sendResult({ ok: false, error: String(e?.name || e) });
-                            cleanup();
-                            return { ok: false, error: String(e?.name || e) };
-                        }
-                    },
-                },
-                (results) => {
-                    if (chrome.runtime.lastError) {
-                        sendResponse({ ok: false, error: normalizeScriptErrorMessage(chrome.runtime.lastError.message) });
-                        return;
-                    }
-                    sendResponse({ ok: true, data: results?.[0]?.result || {} });
-                }
-            );
-            return;
-        }
-
-        if (msg.type === 'AIC_VOICE_STOP') {
-            const { tabId } = msg.payload || {};
-            if (!tabId) { sendResponse({ ok: false, error: 'tabId_missing' }); return; }
-
-            chrome.scripting.executeScript(
-                {
-                    target: { tabId },
-                    func: () => {
-                        try {
-                            if (globalThis.__aicVoice?.stop) {
-                                globalThis.__aicVoice.stop();
-                                return { ok: true };
-                            }
-                            return { ok: true, noRecorder: true };
-                        } catch (e) {
-                            return { ok: false, error: String(e?.name || e) };
-                        }
-                    },
-                },
-                (results) => {
-                    if (chrome.runtime.lastError) {
-                        sendResponse({ ok: false, error: normalizeScriptErrorMessage(chrome.runtime.lastError.message) });
-                        return;
-                    }
-                    sendResponse({ ok: true, data: results?.[0]?.result || {} });
-                }
-            );
             return;
         }
 
