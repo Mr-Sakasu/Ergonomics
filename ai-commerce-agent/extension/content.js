@@ -262,6 +262,7 @@ function addProductCards(items = []) {
     info.style.flex = '1';
     info.innerHTML = `
       <div style="font-weight:600;font-size:13px;line-height:1.25;">${it.title || ''}</div>
+      ${it.description ? `<div style="font-size:12px;opacity:.75;margin-top:2px;">${it.description}</div>` : ''}
       <div style="font-size:12px;opacity:.8;margin-top:2px;">
         ${it.price ? it.price : t('priceUnknown')}${it.source ? ` · ${it.source}` : ''}
       </div>
@@ -321,89 +322,134 @@ sendBtn.onclick = sendMessage;
 inputEl.addEventListener('keydown', e => {
   if (e.key === 'Enter') sendMessage();
 });
-
 // ====== 5. voice input ======
+let isRecording = false;
+let currentRecorder = null;
+let currentStream = null;
+let recordTimeoutId = null;
+
 voiceBtn.onclick = async () => {
+  // すでに録音中なら「停止」として扱う
+  if (isRecording) {
+    stopRecordingManually();
+    return;
+  }
+
   if (!navigator.mediaDevices?.getUserMedia) {
     addBotText(t('voiceNA'));
     return;
   }
 
-  // 音声を聞き始めたことだけはブラウザ言語でOK
+  // 録音開始
   addBotText(t('listening'));
+  isRecording = true;
+  voiceBtn.textContent = '■';          // ボタンの見た目を「停止」っぽく
+  voiceBtn.title = 'Stop';
 
-  // 3.5秒録音
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  const rec = new MediaRecorder(stream);
+  // 6秒くらい録る
+  const MAX_MS = 6000;
+
+  currentStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  currentRecorder = new MediaRecorder(currentStream);
   const chunks = [];
-  rec.ondataavailable = e => chunks.push(e.data);
-  rec.start();
-  await new Promise(r => setTimeout(r, 3500));
-  rec.stop();
-  await new Promise(r => (rec.onstop = r));
-  stream.getTracks().forEach(tr => tr.stop());
+  currentRecorder.ondataavailable = e => chunks.push(e.data);
 
-  const blob = new Blob(chunks, { type: 'audio/webm' });
+  currentRecorder.onstop = async () => {
+    // ここに来たらもう録音は終わり
+    clearRecordingState();
 
-  // blob -> base64
-  const audioBase64 = await new Promise((resolve, reject) => {
-    const fr = new FileReader();
-    fr.onload = () => {
-      const dataUrl = fr.result;
-      resolve(String(dataUrl).split(',')[1] || '');
-    };
-    fr.onerror = reject;
-    fr.readAsDataURL(blob);
-  });
+    const blob = new Blob(chunks, { type: 'audio/webm' });
+    // Blob -> base64
+    const audioBase64 = await new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => {
+        const dataUrl = fr.result;
+        resolve(String(dataUrl).split(',')[1] || '');
+      };
+      fr.onerror = reject;
+      fr.readAsDataURL(blob);
+    });
 
-  if (!audioBase64) {
-    addBotText(t('voiceErr'));
-    return;
-  }
-
-  // あなたの STT エンドポイントに送る
-  const sttResp = await fetch('https://ergonomics-mu.vercel.app/api/stt', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ audioBase64, mimeType: blob.type || 'audio/webm' })
-  }).catch(() => null);
-
-  const stt = sttResp ? await sttResp.json().catch(() => null) : null;
-  if (!stt || !stt.ok || !stt.text) {
-    addBotText(t('voiceErr'));
-    return;
-  }
-
-  // STTで取れたテキストをユーザ気泡で出す
-  addUserBubble(stt.text);
-
-  // STTで取れたテキストの言語に合わせて「検索中…」
-  const loading = addBotText(searchingTextByInput(stt.text));
-
-  chrome.runtime.sendMessage(
-    {
-      type: 'AI_CHAT',
-      payload: {
-        text: stt.text,
-        // STTが言語を返していたらそれを使う。なければローカル推定
-        lang: stt.lang || detectInputLangLocal(stt.text),
-        siteHost: location.hostname || ''
-      }
-    },
-    resp => {
-      if (loading && loading.remove) loading.remove();
-
-      if (!resp || !resp.ok) return addBotText(t('errServer'));
-      const data = resp.data;
-      if (!data || !Array.isArray(data.messages)) return addBotText(t('errFormat'));
-
-      data.messages.forEach(m => {
-        if (m.type === 'text') addBotText(m.content);
-        if (m.type === 'products') addProductCards(m.items);
-      });
+    if (!audioBase64) {
+      addBotText(t('voiceErr'));
+      return;
     }
-  );
+
+    // STT に投げる
+    const sttResp = await fetch('https://ergonomics-mu.vercel.app/api/stt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ audioBase64, mimeType: blob.type || 'audio/webm' })
+    }).catch(() => null);
+
+    const stt = sttResp ? await sttResp.json().catch(() => null) : null;
+    if (!stt || !stt.ok || !stt.text) {
+      addBotText(t('voiceErr'));
+      return;
+    }
+
+    // 文字起こしを表示して、その言語で「検索中…」
+    addUserBubble(stt.text);
+    const loading = addBotText(searchingTextByInput(stt.text));
+
+    chrome.runtime.sendMessage(
+      {
+        type: 'AI_CHAT',
+        payload: {
+          text: stt.text,
+          lang: stt.lang || detectInputLangLocal(stt.text),
+          siteHost: location.hostname || ''
+        }
+      },
+      resp => {
+        if (loading && loading.remove) loading.remove();
+
+        if (!resp || !resp.ok) return addBotText(t('errServer'));
+        const data = resp.data;
+        if (!data || !Array.isArray(data.messages)) return addBotText(t('errFormat'));
+
+        data.messages.forEach(m => {
+          if (m.type === 'text') addBotText(m.content);
+          if (m.type === 'products') addProductCards(m.items);
+        });
+      }
+    );
+  };
+
+  currentRecorder.start();
+
+  // 自動停止タイマー
+  recordTimeoutId = setTimeout(() => {
+    if (currentRecorder && currentRecorder.state === 'recording') {
+      currentRecorder.stop();
+    }
+  }, MAX_MS);
 };
+
+// 手動停止用
+function stopRecordingManually() {
+  if (currentRecorder && currentRecorder.state === 'recording') {
+    currentRecorder.stop();
+  } else {
+    clearRecordingState();
+  }
+}
+
+function clearRecordingState() {
+  isRecording = false;
+  voiceBtn.textContent = '🎤';
+  voiceBtn.title = t('voiceTitle');
+
+  if (recordTimeoutId) {
+    clearTimeout(recordTimeoutId);
+    recordTimeoutId = null;
+  }
+  if (currentStream) {
+    currentStream.getTracks().forEach(tr => tr.stop());
+    currentStream = null;
+  }
+  currentRecorder = null;
+}
 
 // ====== 6. minimize ======
 let minimized = false;
@@ -426,3 +472,23 @@ minimizeBtn.onclick = () => {
     minimizeBtn.title = t('minimize');
   }
 };
+
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.type === 'AIC_RUN_SEARCH') {
+    const kw = (msg.kw || '').trim();
+    if (!kw) return;
+
+    // 入力欄に入れて既存の送信処理を流用
+    inputEl.value = kw;
+
+    // provider を使いたいなら、payload に含めるよう sendMessage を拡張してもOK
+    // （※ /api/chatbot が provider を受け取れるようにした場合）
+    sendMessage();
+  }
+
+  if (msg.type === 'AIC_TOGGLE_PANEL') {
+    // 既存の minimize と同様のトグル関数があるなら呼ぶ
+    // なければ簡易に表示/非表示を切り替える処理を入れる
+    panel.style.display = (panel.style.display === 'none') ? 'flex' : 'none';
+  }
+});
