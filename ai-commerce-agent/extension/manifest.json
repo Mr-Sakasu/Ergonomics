@@ -1,33 +1,23 @@
 {
   "manifest_version": 3,
-  "name": "E-commerce × AI ",
-  "version": "1.0.0",
+  "name": "E-commerce × AI",
+  "version": "1.0.3",
   "description": "AI-Powered E-commerce",
   "permissions": [
-    "storage",
     "activeTab",
-    "scripting"
+    "scripting",
+    "sidePanel"
   ],
   "host_permissions": [
-    "https://*/*",
-    "http://*/*"
+    "https://ergonomics-mu.vercel.app/*"
   ],
   "background": {
     "service_worker": "background.js"
   },
   "action": {
-    "default_popup": "popup.html"
+    "default_title": "AI Commerce Agent"
   },
-  "content_scripts": [
-    {
-      "matches": [
-        "https://*/*",
-        "http://*/*"
-      ],
-      "js": [
-        "content.js"
-      ],
-      "run_at": "document_idle"
-    }
-  ]
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  }
 }

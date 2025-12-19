@@ -2,3 +2,37 @@
 a.sh
 setup.sh
 node_modules
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
+
+# Dependency directories
+**/node_modules/
+
+# Build output
+dist/
+build/
+out/
+.next/
+
+# Coverage and test output
+coverage/
+.nyc_output/
+
+# OS / editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Cursor / IDE state
+.cursor/
+
+# Local environment / overrides
+.env.*
+!.env.example
+
