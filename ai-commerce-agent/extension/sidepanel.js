@@ -1,70 +1,288 @@
 // extension/sidepanel.js (REPLACE WHOLE FILE)
-// - Port通信のみ（sendMessageは使わない）
-// - JD固定（provider: 'jd'）
-// - 音声: SidePanel内で録音 → backgroundへAIC_STT → 文字起こし → AI_CHAT
-//
-// Changes:
-// - 初期メッセージ/入力placeholderを AIC_UI_INIT 経由で API(/api/ui-init) から取得（多言語対応）
-// - 画面上の "（JD固定 / Modeなし）" 文言を見つけたら自動で削除
-// - "検索中..." の表示言語は「直前に入力された言語」を優先（簡易判定）
+// Fix: Ensure DOM is ready before binding events (prevents send button "no response").
+// Fix: Robust language detect for ANY language (chrome.i18n.detectLanguage first + timeout, then remote fallback).
+// Fix: UI pack cache key bumped to v3.
 
-const el = {
-    msgs: document.getElementById('msgs'),
-    inp: document.getElementById('inp'),
-    send: document.getElementById('send'),
-    mic: document.getElementById('mic'),
-};
+console.log("[AIC] sidepanel.js loaded");
 
-function addBubble(text, who = 'bot') {
-    const div = document.createElement('div');
-    div.className = `bubble ${who === 'me' ? 'me' : 'bot'}`;
-    div.textContent = String(text || '');
+let el = null;
+
+function addBubble(text, who = "bot") {
+    if (!el?.msgs) return null;
+    const div = document.createElement("div");
+    div.className = `bubble ${who === "me" ? "me" : "bot"}`;
+    div.textContent = String(text || "");
     el.msgs.appendChild(div);
     el.msgs.scrollTop = el.msgs.scrollHeight;
     return div;
 }
 
+// ===== Port通信 =====
+const port = chrome.runtime.connect({ name: "aic" });
+const pending = new Map();
+
+port.onMessage.addListener((msg) => {
+    const jobId = msg?.jobId;
+    if (!jobId) return;
+
+    const p = pending.get(jobId);
+    if (!p) return;
+    pending.delete(jobId);
+
+    if (msg.type === "AI_CHAT_RESULT") p.resolve(msg.out);
+    else if (msg.type === "AIC_STT_RESULT") p.resolve(msg.out);
+    else if (msg.type === "AIC_UI_INIT_RESULT") p.resolve(msg.out);
+    else if (msg.type === "AIC_LANG_DETECT_RESULT") p.resolve(msg.out);
+    else p.reject(new Error(msg?.error || "unknown_error"));
+});
+
+port.onDisconnect.addListener(() => {
+    for (const [jobId, p] of pending.entries()) {
+        p.reject(new Error("port_disconnected"));
+        pending.delete(jobId);
+    }
+    addBubble("⚠️ Connection to background process was lost. Please reload the extension.", "bot");
+});
+
+function requestPort(type, payload, timeoutMs = 120000) {
+    const jobId = `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    return new Promise((resolve, reject) => {
+        const t = setTimeout(() => {
+            pending.delete(jobId);
+            reject(new Error("timeout"));
+        }, timeoutMs);
+
+        pending.set(jobId, {
+            resolve: (v) => {
+                clearTimeout(t);
+                resolve(v);
+            },
+            reject: (e) => {
+                clearTimeout(t);
+                reject(e);
+            },
+        });
+
+        try {
+            port.postMessage({ type, jobId, payload });
+        } catch (e) {
+            clearTimeout(t);
+            pending.delete(jobId);
+            reject(e);
+        }
+    });
+}
+
+// ===== lang helpers =====
+function langBase(lang = "") {
+    const s = String(lang || "").trim();
+    if (!s) return "en";
+    return s.toLowerCase().split(/[-_]/)[0] || "en";
+}
+
+function normalizeLangTag(lang) {
+    const s = String(lang || "").trim();
+    if (!s) return "en-US";
+
+    if (/^zh[-_](cn|tw|hk)$/i.test(s)) {
+        const [a, b] = s.split(/[-_]/);
+        return `${a.toLowerCase()}-${b.toUpperCase()}`;
+    }
+
+    if (/^[a-z]{2}$/i.test(s)) {
+        const b = s.toLowerCase();
+        if (b === "en") return "en-US";
+        if (b === "ja") return "ja-JP";
+        if (b === "zh") return "zh-CN";
+        if (b === "ko") return "ko-KR";
+        return b; // fr/de/es/... keep as 2-letter
+    }
+
+    const parts = s.split(/[-_]/);
+    if (parts.length === 1) return parts[0].toLowerCase();
+    return parts
+        .map((p, i) => {
+            if (i === 0) return p.toLowerCase();
+            if (p.length === 2) return p.toUpperCase();
+            if (p.length === 4) return p[0].toUpperCase() + p.slice(1).toLowerCase();
+            return p;
+        })
+        .join("-");
+}
+
+function getDefaultUiLang() {
+    try {
+        const l = chrome.i18n?.getUILanguage?.();
+        if (l) return normalizeLangTag(l);
+    } catch (_) { }
+    return normalizeLangTag(navigator.language || "en-US");
+}
+
+// ===== UI pack (per language) =====
+const uiCache = new Map(); // lang -> pack
+let ui = {
+    lang: "en-US",
+    welcome: "",
+    placeholder: "",
+    open_button: "Open",
+    no_image: "No image",
+    searching: "🔎 Searching…",
+};
+
+async function ensureUiPack(lang, { showWelcome = false, setPlaceholder = true } = {}) {
+    const norm = normalizeLangTag(lang);
+    const key = `aic_ui_pack_v3_${norm}`;
+
+    if (uiCache.has(norm)) {
+        ui = uiCache.get(norm);
+        if (setPlaceholder && ui.placeholder && el?.inp) el.inp.placeholder = ui.placeholder;
+        if (showWelcome && ui.welcome) addBubble(ui.welcome, "bot");
+        return ui;
+    }
+
+    // localStorage cache
+    try {
+        const cached = localStorage.getItem(key);
+        if (cached) {
+            const j = JSON.parse(cached);
+            if (j?.lang && j?.open_button) {
+                uiCache.set(norm, j);
+                ui = j;
+                if (setPlaceholder && ui.placeholder && el?.inp) el.inp.placeholder = ui.placeholder;
+                if (showWelcome && ui.welcome) addBubble(ui.welcome, "bot");
+                return ui;
+            }
+        }
+    } catch (_) { }
+
+    // fetch via background -> /api/ui-init
+    const out = await requestPort("AIC_UI_INIT", { lang: norm }, 120000);
+    const data = out?.data;
+
+    if (data?.ok) {
+        const pack = {
+            lang: normalizeLangTag(data.lang || norm),
+            welcome: data.welcome || "",
+            placeholder: data.placeholder || "",
+            open_button: data.open_button || "Open",
+            no_image: data.no_image || "No image",
+            searching: data.searching || "🔎 Searching…",
+        };
+
+        uiCache.set(pack.lang, pack);
+        ui = pack;
+
+        try {
+            localStorage.setItem(`aic_ui_pack_v3_${pack.lang}`, JSON.stringify(pack));
+        } catch (_) { }
+
+        if (setPlaceholder && pack.placeholder && el?.inp) el.inp.placeholder = pack.placeholder;
+        if (showWelcome && pack.welcome) addBubble(pack.welcome, "bot");
+        return pack;
+    }
+
+    ui = { ...ui, lang: norm };
+    return ui;
+}
+
+// ===== Language detect (ANY language) =====
+function detectLangByChromeWithTimeout(text, timeoutMs = 700) {
+    return new Promise((resolve) => {
+        let done = false;
+        const finish = (v) => {
+            if (done) return;
+            done = true;
+            resolve(v);
+        };
+
+        const timer = setTimeout(() => finish(null), timeoutMs);
+
+        try {
+            if (!chrome?.i18n?.detectLanguage) {
+                clearTimeout(timer);
+                return finish(null);
+            }
+            chrome.i18n.detectLanguage(String(text || ""), (res) => {
+                clearTimeout(timer);
+                const err = chrome.runtime?.lastError;
+                if (err || !res) return finish(null);
+
+                const langs = Array.isArray(res.languages) ? res.languages : [];
+                langs.sort((a, b) => (b.percentage || 0) - (a.percentage || 0));
+                const best = langs.find((x) => x?.language && x.language !== "und" && (x.percentage || 0) >= 20);
+                if (!best?.language) return finish(null);
+                finish(normalizeLangTag(best.language));
+            });
+        } catch (_) {
+            clearTimeout(timer);
+            finish(null);
+        }
+    });
+}
+
+async function detectLangRemote(text, defaultLang) {
+    try {
+        const out = await requestPort("AIC_LANG_DETECT", { text, defaultLang }, 120000);
+        return normalizeLangTag(out?.data?.lang || defaultLang || "en-US");
+    } catch (_) {
+        return normalizeLangTag(defaultLang || "en-US");
+    }
+}
+
+async function detectLangSmart(text, defaultLang) {
+    const def = normalizeLangTag(defaultLang || "en-US");
+    const local = await detectLangByChromeWithTimeout(text, 700);
+    if (local) return local;
+    return await detectLangRemote(text, def);
+}
+
+// ===== Products renderer (uses current ui pack) =====
 function addProducts(items = []) {
-    const wrap = document.createElement('div');
-    wrap.className = 'products';
+    if (!el?.msgs) return;
+
+    const wrap = document.createElement("div");
+    wrap.className = "products";
 
     for (const it of items) {
-        const card = document.createElement('div');
-        card.className = 'card';
+        const card = document.createElement("div");
+        card.className = "card";
 
-        const thumb = document.createElement('div');
-        thumb.className = 'thumb';
+        const thumb = document.createElement("div");
+        thumb.className = "thumb";
+
         if (it.image) {
-            const img = document.createElement('img');
+            const img = document.createElement("img");
             img.src = it.image;
-            img.alt = it.title || '';
+            img.alt = it.title || "";
             thumb.appendChild(img);
         } else {
-            thumb.textContent = 'No Image';
+            thumb.textContent = ui.no_image || "No image";
         }
 
-        const meta = document.createElement('div');
-        meta.className = 'meta';
+        const meta = document.createElement("div");
+        meta.className = "meta";
 
-        const t = document.createElement('div');
-        t.className = 't';
-        t.textContent = it.title || '';
+        const t = document.createElement("div");
+        t.className = "t";
+        t.textContent = it.title || "";
 
-        const d = document.createElement('div');
-        d.className = 'd';
-        d.textContent = it.description || '';
+        const d = document.createElement("div");
+        d.className = "d";
+        d.textContent = it.description || "";
 
-        const p = document.createElement('div');
-        p.className = 'p';
-        p.textContent = `${it.price || '価格不明'}${it.source ? ` · ${it.source}` : ''}`;
+        const p = document.createElement("div");
+        p.className = "p";
+        p.textContent =
+            `${it.price || ""}${it.source ? ` · ${it.source}` : ""}`.trim() ||
+            (it.source ? `· ${it.source}` : "");
 
         meta.appendChild(t);
         if (it.description) meta.appendChild(d);
         meta.appendChild(p);
 
-        const open = document.createElement('button');
-        open.className = 'open';
-        open.textContent = '開く';
+        const open = document.createElement("button");
+        open.className = "open";
+        open.textContent = ui.open_button || "Open";
         open.onclick = () => {
             if (!it.url) return;
             chrome.tabs.create({ url: it.url });
@@ -81,212 +299,62 @@ function addProducts(items = []) {
     el.msgs.scrollTop = el.msgs.scrollHeight;
 }
 
-// ===== Port通信 =====
-const port = chrome.runtime.connect({ name: 'aic' });
-const pending = new Map();
-
-port.onMessage.addListener((msg) => {
-    const jobId = msg?.jobId;
-    if (!jobId) return;
-
-    const p = pending.get(jobId);
-    if (!p) return;
-    pending.delete(jobId);
-
-    if (msg.type === 'AI_CHAT_RESULT') p.resolve(msg.out);
-    else if (msg.type === 'AIC_STT_RESULT') p.resolve(msg.out);
-    else if (msg.type === 'AIC_UI_INIT_RESULT') p.resolve(msg.out);
-    else p.reject(new Error(msg?.error || 'unknown_error'));
-});
-
-port.onDisconnect.addListener(() => {
-    for (const [jobId, p] of pending.entries()) {
-        p.reject(new Error('port_disconnected'));
-        pending.delete(jobId);
-    }
-    addBubble('⚠️ 背景プロセスとの接続が切れました。拡張機能を再読み込みしてください。', 'bot');
-});
-
-function requestPort(type, payload, timeoutMs = 120000) {
-    const jobId = `${Date.now()}_${Math.random().toString(16).slice(2)}`;
-    return new Promise((resolve, reject) => {
-        const t = setTimeout(() => {
-            pending.delete(jobId);
-            reject(new Error('timeout'));
-        }, timeoutMs);
-
-        pending.set(jobId, {
-            resolve: (v) => { clearTimeout(t); resolve(v); },
-            reject: (e) => { clearTimeout(t); reject(e); },
-        });
-
-        port.postMessage({ type, jobId, payload });
-    });
-}
-
-// ===== (JD固定 / Modeなし) の表示を消す =====
-function stripFixedModeText() {
-    const patterns = [
-        /\(\s*JD固定\s*\/\s*Modeなし\s*\)/g,
-        /（\s*JD固定\s*\/\s*Modeなし\s*）/g,
-        /\(\s*JD\s*固定\s*\/\s*Mode\s*なし\s*\)/g,
-        /（\s*JD\s*固定\s*\/\s*Mode\s*なし\s*）/g,
-    ];
-
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-    const nodes = [];
-    while (walker.nextNode()) {
-        const n = walker.currentNode;
-        const v = String(n.nodeValue || '');
-        if (v.includes('JD固定') || v.includes('Modeなし')) nodes.push(n);
-    }
-
-    for (const n of nodes) {
-        let v = String(n.nodeValue || '');
-        for (const re of patterns) v = v.replace(re, '');
-        v = v.replace(/\s{2,}/g, ' ').trim();
-        n.nodeValue = v;
-    }
-}
-
-// ===== 表示用言語（検索中表示用）=====
-// NOTE: ここは簡易。日本語/中国語/韓国語以外は en 扱い。
-// 初期UIは /api/ui-init が多言語化してくれるので問題になりにくいです。
-function detectInputLangLocal(str) {
-    if (!str) return 'en';
-    if (/[ぁ-んァ-ン]/.test(str)) return 'ja';
-    if (/[\uac00-\ud7af]/.test(str)) return 'ko';
-    if (/[\u4E00-\u9FFF\u3400-\u4DBF\uF900-\uFAFF]/.test(str)) return 'zh';
-    return 'en';
-}
-function toBcp47(base) {
-    const b = String(base || 'en').toLowerCase();
-    if (b === 'ja') return 'ja-JP';
-    if (b === 'zh') return 'zh-CN';
-    if (b === 'ko') return 'ko-KR';
-    return 'en-US';
-}
-
-let lastUiLang = navigator.language || 'en-US';
-
-function searchingTextByLang(langTag) {
-    const b = String(langTag || '').toLowerCase().split(/[-_]/)[0];
-    if (b === 'ja') return '🔎 検索中です…';
-    if (b === 'zh') return '🔎 正在为你查找…';
-    if (b === 'ko') return '🔎 검색 중입니다…';
-    return '🔎 Searching…';
-}
-
-// ===== 初期メッセージ/placeholder を API から取得 =====
-async function initUiFromApi() {
-    // remove fixed text as early as possible
-    try { stripFixedModeText(); } catch (_) { }
-
-    const lang = navigator.language || 'en-US';
-    lastUiLang = lang;
-
-    // cache (localStorage)
-    const cacheKey = `aic_ui_init_v1_${lang}`;
-    try {
-        const cached = localStorage.getItem(cacheKey);
-        if (cached) {
-            const j = JSON.parse(cached);
-            if (j?.welcome) addBubble(j.welcome, 'bot');
-            if (j?.placeholder) el.inp.placeholder = j.placeholder;
-            setTimeout(stripFixedModeText, 50);
-            return;
-        }
-    } catch (_) { }
-
-    const tmp = addBubble('…', 'bot');
-
-    try {
-        const out = await requestPort('AIC_UI_INIT', { lang }, 120000);
-        const data = out?.data;
-
-        if (tmp?.remove) tmp.remove();
-
-        if (data?.ok && (data.welcome || data.placeholder)) {
-            if (data.welcome) addBubble(data.welcome, 'bot');
-            if (data.placeholder) el.inp.placeholder = data.placeholder;
-
-            try { localStorage.setItem(cacheKey, JSON.stringify({ welcome: data.welcome, placeholder: data.placeholder })); } catch (_) { }
-        } else {
-            // fallback minimal
-            addBubble('Tell me what you want (JD search).', 'bot');
-        }
-    } catch (e) {
-        if (tmp?.remove) tmp.remove();
-        addBubble('Tell me what you want (JD search).', 'bot');
-    } finally {
-        setTimeout(stripFixedModeText, 80);
-    }
-}
-
-// ===== メイン送信 =====
+// ===== Main send =====
 async function sendChat(text) {
-    const q = String(text || '').trim();
+    const q = String(text || "").trim();
     if (!q) return;
 
-    // update lastUiLang based on input
-    const base = detectInputLangLocal(q);
-    lastUiLang = toBcp47(base);
+    addBubble(q, "me");
 
-    addBubble(q, 'me');
-    const loading = addBubble(searchingTextByLang(lastUiLang), 'bot');
+    const defaultLang = ui?.lang || getDefaultUiLang();
+    const detectedLang = await detectLangSmart(q, defaultLang);
+
+    await ensureUiPack(detectedLang, { showWelcome: false, setPlaceholder: false });
+    const loading = addBubble(ui.searching || "🔎 Searching…", "bot");
 
     try {
-        const out = await requestPort('AI_CHAT', {
+        const out = await requestPort("AI_CHAT", {
             text: q,
-            lang: lastUiLang,
-            provider: 'jd',
+            lang: detectedLang, // reply language follows user input language
+            provider: "jd",
         });
 
         if (loading?.remove) loading.remove();
 
         if (!out || out.ok === false || !out.data) {
-            addBubble(`サーバー/拡張機能の応答がありません。\n${out?.error || ''}`, 'bot');
+            addBubble(`No response from server/extension.\n${out?.error || ""}`, "bot");
             return;
         }
 
         const data = out.data;
         const msgs = Array.isArray(data.messages) ? data.messages : [];
         if (!msgs.length) {
-            addBubble('返答が空でした（messagesがありません）。', 'bot');
+            addBubble("Empty response (no messages).", "bot");
             return;
         }
 
         for (const m of msgs) {
-            if (m.type === 'text') addBubble(m.content || '', 'bot');
-            if (m.type === 'products') addProducts(Array.isArray(m.items) ? m.items : []);
+            if (m.type === "text") addBubble(m.content || "", "bot");
+            if (m.type === "products") addProducts(Array.isArray(m.items) ? m.items : []);
         }
-
-        // In case header text was re-rendered
-        try { stripFixedModeText(); } catch (_) { }
-
     } catch (e) {
         if (loading?.remove) loading.remove();
-        addBubble(`通信エラー:\n${String(e?.message || e)}`, 'bot');
+        addBubble(`Network error:\n${String(e?.message || e)}`, "bot");
     }
 }
 
-// ===== 音声（SidePanel内で録音）=====
-const voice = {
-    recording: false,
-    stream: null,
-    recorder: null,
-    chunks: [],
-    timer: null,
-};
+// ===== Voice (same as yours) =====
+const voice = { recording: false, stream: null, recorder: null, chunks: [], timer: null };
 
 function setMicUI(on) {
     voice.recording = !!on;
+    if (!el?.mic) return;
     if (voice.recording) {
-        el.mic.classList.add('recording');
-        el.mic.textContent = '■';
+        el.mic.classList.add("recording");
+        el.mic.textContent = "■";
     } else {
-        el.mic.classList.remove('recording');
-        el.mic.textContent = '🎤';
+        el.mic.classList.remove("recording");
+        el.mic.textContent = "🎤";
     }
 }
 
@@ -307,7 +375,7 @@ function cleanupRecording() {
 function blobToBase64(blob) {
     return new Promise((resolve, reject) => {
         const fr = new FileReader();
-        fr.onload = () => resolve(String(fr.result).split(',')[1] || '');
+        fr.onload = () => resolve(String(fr.result).split(",")[1] || "");
         fr.onerror = reject;
         fr.readAsDataURL(blob);
     });
@@ -316,7 +384,7 @@ function blobToBase64(blob) {
 async function startRecording() {
     if (voice.recording) return;
 
-    addBubble('🎤 ...', 'bot');
+    addBubble("🎤 ...", "bot");
     setMicUI(true);
 
     try {
@@ -330,31 +398,27 @@ async function startRecording() {
 
         voice.recorder.onstop = async () => {
             try {
-                const blob = new Blob(voice.chunks, { type: voice.recorder?.mimeType || 'audio/webm' });
+                const blob = new Blob(voice.chunks, { type: voice.recorder?.mimeType || "audio/webm" });
                 const audioBase64 = await blobToBase64(blob);
                 cleanupRecording();
 
                 if (!audioBase64) {
-                    addBubble('音声データが空でした。', 'bot');
+                    addBubble("Empty audio data.", "bot");
                     return;
                 }
 
-                const sttOut = await requestPort(
-                    'AIC_STT',
-                    { audioBase64, mimeType: blob.type || 'audio/webm' },
-                    120000
-                );
-
+                const sttOut = await requestPort("AIC_STT", { audioBase64, mimeType: blob.type || "audio/webm" }, 120000);
                 const stt = sttOut?.data;
+
                 if (!stt || !stt.ok || !stt.text) {
-                    addBubble(`音声認識に失敗しました。\n${stt?.error || sttOut?.error || ''}`, 'bot');
+                    addBubble(`STT failed.\n${stt?.error || sttOut?.error || ""}`, "bot");
                     return;
                 }
 
                 await sendChat(stt.text);
             } catch (e) {
                 cleanupRecording();
-                addBubble(`音声処理エラー:\n${String(e?.message || e)}`, 'bot');
+                addBubble(`Voice error:\n${String(e?.message || e)}`, "bot");
             }
         };
 
@@ -362,47 +426,72 @@ async function startRecording() {
 
         voice.timer = setTimeout(() => {
             try {
-                if (voice.recorder && voice.recorder.state === 'recording') voice.recorder.stop();
+                if (voice.recorder && voice.recorder.state === "recording") voice.recorder.stop();
             } catch (_) {
                 cleanupRecording();
             }
         }, 6500);
-
     } catch (e) {
         cleanupRecording();
-        addBubble(`音声入力に失敗しました: ${String(e?.name || e)}`, 'bot');
+        addBubble(`Mic error: ${String(e?.name || e)}`, "bot");
     }
 }
 
 function stopRecording() {
     try {
-        if (voice.recorder && voice.recorder.state === 'recording') voice.recorder.stop();
+        if (voice.recorder && voice.recorder.state === "recording") voice.recorder.stop();
         else cleanupRecording();
     } catch (_) {
         cleanupRecording();
     }
 }
 
-// ===== UI events =====
-el.send.addEventListener('click', () => {
-    const v = el.inp.value;
-    el.inp.value = '';
-    sendChat(v);
-});
+// ===== Init AFTER DOM ready =====
+function init() {
+    el = {
+        msgs: document.getElementById("msgs"),
+        inp: document.getElementById("inp"),
+        send: document.getElementById("send"),
+        mic: document.getElementById("mic"),
+    };
 
-el.inp.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        const v = el.inp.value;
-        el.inp.value = '';
-        sendChat(v);
+    // If IDs mismatch, show a visible error instead of silently dying.
+    const missing = Object.entries(el).filter(([, v]) => !v).map(([k]) => k);
+    if (missing.length) {
+        console.error("[AIC] sidepanel missing elements:", missing);
+        // try to show in UI if possible
+        if (el.msgs) addBubble(`⚠️ UI element not found: ${missing.join(", ")}\n(sidepanel.htmlのidを確認してください)`, "bot");
+        return;
     }
-});
 
-el.mic.addEventListener('click', () => {
-    if (voice.recording) stopRecording();
-    else startRecording();
-});
+    el.send.addEventListener("click", () => {
+        const v = el.inp.value;
+        el.inp.value = "";
+        sendChat(v);
+    });
 
-// initial
-initUiFromApi();
+    el.inp.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            const v = el.inp.value;
+            el.inp.value = "";
+            sendChat(v);
+        }
+    });
+
+    el.mic.addEventListener("click", () => {
+        if (voice.recording) stopRecording();
+        else startRecording();
+    });
+
+    (async () => {
+        const lang = getDefaultUiLang();
+        await ensureUiPack(lang, { showWelcome: true, setPlaceholder: true });
+    })();
+}
+
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+} else {
+    init();
+}

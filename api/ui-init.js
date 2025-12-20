@@ -1,7 +1,16 @@
-// api/ui-init.js (NEW FILE)
+// api/ui-init.js (REPLACE WHOLE FILE)
 //
-// Returns localized UI strings for the SidePanel (welcome message + input placeholder).
-// The extension calls this once at startup via background (AIC_UI_INIT).
+// Returns localized UI strings for SidePanel.
+// {
+//   ok: true,
+//   lang: "...",
+//   welcome: "...",
+//   placeholder: "...",
+//   open_button: "...",   // label for product card button
+//   no_image: "...",      // label when image missing
+//   searching: "...",     // loading bubble
+//   ui_version: 2
+// }
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_API_BASE = process.env.OPENAI_API_BASE || "https://api.openai.com";
@@ -79,27 +88,35 @@ module.exports = async (req, res) => {
         const hint = normalizeLangHint(body.lang || "");
         const userLang = hint || toBcp47(langBase(hint || "en"));
 
-        // If OpenAI key missing, fallback minimal strings
+        // No OpenAI -> basic fallback (ja/zh/en only)
         if (!OPENAI_API_KEY) {
             const b = langBase(userLang);
             const fallback =
                 b === "ja"
                     ? {
-                        welcome: "欲しいものを入力してください（JDで検索します）。例：「ラーメン」「軽いノートPC 10万円」「iPhone 15 ケース」",
-                        placeholder: "例）ラーメン / 軽い ノートPC 10万円 / iPhone 15 ケース",
+                        welcome: "欲しいものを入力してください。例：ラーメン / 軽い ノートPC 10万円 / iPhone 15 ケース",
+                        placeholder: "例：ラーメン / 軽い ノートPC 10万円 / iPhone 15 ケース",
+                        open_button: "開く",
+                        no_image: "画像なし",
+                        searching: "🔎 検索中です…",
                     }
                     : b === "zh"
                         ? {
-                            welcome: "请输入你想买的东西（我会在京东搜索）。例如：拉面、轻薄笔记本电脑、iPhone 15 手机壳。",
-                            placeholder: "例如：拉面 / 轻薄 笔记本电脑 / iPhone 15 手机壳",
+                            welcome: "请输入你想买的东西。例：拉面 / 轻薄 笔记本电脑 / iPhone 15 手机壳",
+                            placeholder: "例：拉面 / 轻薄 笔记本电脑 / iPhone 15 手机壳",
+                            open_button: "打开",
+                            no_image: "无图片",
+                            searching: "🔎 正在查找…",
                         }
                         : {
-                            welcome:
-                                'Tell me what you want (I will search on JD). e.g. "ramen", "light laptop under 4000 CNY", "iPhone 15 case".',
-                            placeholder: 'e.g. ramen / light laptop / iPhone 15 case',
+                            welcome: 'Tell me what you want. e.g. ramen / lightweight laptop / iPhone 15 case',
+                            placeholder: 'e.g. ramen / lightweight laptop / iPhone 15 case',
+                            open_button: "Open",
+                            no_image: "No image",
+                            searching: "🔎 Searching…",
                         };
 
-            return res.status(200).json({ ok: true, lang: userLang, ...fallback, ui_version: 1 });
+            return res.status(200).json({ ok: true, lang: userLang, ...fallback, ui_version: 2 });
         }
 
         const system = `
@@ -107,34 +124,37 @@ You generate SHORT UI copy for an e-commerce assistant side panel.
 
 Return JSON with EXACT keys:
 {
-  "welcome": "...",      // 1-2 short sentences
-  "placeholder": "..."   // a short placeholder with examples
+  "welcome": "...",       // 1 short sentence
+  "placeholder": "...",   // short placeholder with 2-3 examples
+  "open_button": "...",   // a short verb like "Open"
+  "no_image": "...",      // short label like "No image"
+  "searching": "..."      // short loading like "Searching..."
 }
 
 Rules:
 - Write in the user's language exactly: ${userLang}.
-- Mention that it searches JD (Jingdong / 京东) but do NOT mention any internal mode text like "(JD固定 / Modeなし)".
-- Keep it short, friendly, and actionable.
-- Provide examples like: ramen, lightweight laptop, iPhone case.
+- Do NOT mix other languages in examples.
+- Keep it short and natural.
+- Mention examples like: ramen, lightweight laptop, iPhone 15 case (in this language).
 `;
 
         const obj = await openaiJson(
             [
                 { role: "system", content: system.trim() },
-                { role: "user", content: "Generate UI strings for the side panel." },
+                { role: "user", content: "Generate UI strings." },
             ],
             12000
         );
 
-        const welcome = String(obj?.welcome || "").trim();
-        const placeholder = String(obj?.placeholder || "").trim();
-
         const out = {
             ok: true,
             lang: userLang,
-            welcome: welcome || "Tell me what you want (JD search).",
-            placeholder: placeholder || 'e.g. ramen / light laptop / iPhone 15 case',
-            ui_version: 1
+            welcome: String(obj?.welcome || "").trim() || "Tell me what you want.",
+            placeholder: String(obj?.placeholder || "").trim() || "e.g. ramen / lightweight laptop / iPhone 15 case",
+            open_button: String(obj?.open_button || "").trim() || "Open",
+            no_image: String(obj?.no_image || "").trim() || "No image",
+            searching: String(obj?.searching || "").trim() || "🔎 Searching…",
+            ui_version: 2
         };
 
         return res.status(200).json(out);
