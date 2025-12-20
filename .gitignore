@@ -36,3 +36,18 @@ Thumbs.db
 .env.*
 !.env.example
 
+# Debug files
+*_debug.html
+*_debug.png
+*_debug.*
+jd_*_debug.*
+
+# Playwright / browser profiles
+.pw-*/
+**/.pw-*/
+
+# Temporary / test files
+*.tmp
+*.temp
+test_*.html
+
