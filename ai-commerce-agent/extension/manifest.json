@@ -12,6 +12,7 @@
   "host_permissions": [
     "https://ergonomics-mu.vercel.app/*",
     "https://*.jd.com/*",
+    "https://jd.com/*",
     "https://p.3.cn/*"
   ],
   "background": {

@@ -1,16 +1,13 @@
+// extension/sidepanel.js (REPLACE WHOLE FILE)
+// - Port通信のみ（sendMessageは使わない）
+// - JD固定（provider: 'jd'）
+// - 音声: SidePanel内で録音 → backgroundへAIC_STT → 文字起こし → AI_CHAT
+
 const el = {
     msgs: document.getElementById('msgs'),
     inp: document.getElementById('inp'),
     send: document.getElementById('send'),
     mic: document.getElementById('mic'),
-};
-
-const state = {
-    recording: false,
-    stream: null,
-    recorder: null,
-    chunks: [],
-    timer: null,
 };
 
 function addBubble(text, who = 'bot') {
@@ -71,6 +68,7 @@ function addProducts(items = []) {
         card.appendChild(thumb);
         card.appendChild(meta);
         card.appendChild(open);
+
         wrap.appendChild(card);
     }
 
@@ -78,16 +76,49 @@ function addProducts(items = []) {
     el.msgs.scrollTop = el.msgs.scrollHeight;
 }
 
-function sendToBg(type, payload) {
-    return new Promise((resolve) => {
-        chrome.runtime.sendMessage({ type, payload }, (resp) => {
-            const err = chrome.runtime.lastError;
-            if (err) resolve({ ok: false, error: err.message });
-            else resolve(resp);
+// ===== Port通信（長時間処理でも channel closed しない）=====
+const port = chrome.runtime.connect({ name: 'aic' });
+const pending = new Map();
+
+port.onMessage.addListener((msg) => {
+    const jobId = msg?.jobId;
+    if (!jobId) return;
+
+    const p = pending.get(jobId);
+    if (!p) return;
+    pending.delete(jobId);
+
+    if (msg.type === 'AI_CHAT_RESULT') p.resolve(msg.out);
+    else if (msg.type === 'AIC_STT_RESULT') p.resolve(msg.out);
+    else p.reject(new Error(msg?.error || 'unknown_error'));
+});
+
+port.onDisconnect.addListener(() => {
+    for (const [jobId, p] of pending.entries()) {
+        p.reject(new Error('port_disconnected'));
+        pending.delete(jobId);
+    }
+    addBubble('⚠️ 背景プロセスとの接続が切れました。拡張機能を再読み込みしてください。', 'bot');
+});
+
+function requestPort(type, payload, timeoutMs = 120000) {
+    const jobId = `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    return new Promise((resolve, reject) => {
+        const t = setTimeout(() => {
+            pending.delete(jobId);
+            reject(new Error('timeout'));
+        }, timeoutMs);
+
+        pending.set(jobId, {
+            resolve: (v) => { clearTimeout(t); resolve(v); },
+            reject: (e) => { clearTimeout(t); reject(e); },
         });
+
+        port.postMessage({ type, jobId, payload });
     });
 }
 
+// ===== 表示用言語（検索中文言）=====
 function detectInputLangLocal(str) {
     if (!str) return 'en';
     if (/[ぁ-んァ-ン]/.test(str)) return 'ja';
@@ -95,7 +126,6 @@ function detectInputLangLocal(str) {
     if (/[\u4E00-\u9FFF\u3400-\u4DBF\uF900-\uFAFF]/.test(str)) return 'zh';
     return 'en';
 }
-
 function searchingTextByInput(str) {
     const lang = detectInputLangLocal(str);
     if (lang === 'ja') return '🔎 検索中です…';
@@ -104,6 +134,7 @@ function searchingTextByInput(str) {
     return '🔎 Searching…';
 }
 
+// ===== メイン送信 =====
 async function sendChat(text) {
     const q = String(text || '').trim();
     if (!q) return;
@@ -111,59 +142,133 @@ async function sendChat(text) {
     addBubble(q, 'me');
     const loading = addBubble(searchingTextByInput(q), 'bot');
 
-    const resp = await sendToBg('AI_CHAT', {
-        text: q,
-        lang: navigator.language || 'ja-JP',
-        provider: 'jd'
-    });
+    try {
+        const out = await requestPort('AI_CHAT', {
+            text: q,
+            lang: navigator.language || 'ja-JP',
+            provider: 'jd',
+        });
 
-    if (loading?.remove) loading.remove();
+        if (loading?.remove) loading.remove();
 
-    if (!resp || resp.ok === false || !resp.data) {
-        addBubble(`サーバー/拡張機能の応答がありません。\n${resp?.error || ''}`, 'bot');
-        return;
-    }
+        if (!out || out.ok === false || !out.data) {
+            addBubble(`サーバー/拡張機能の応答がありません。\n${out?.error || ''}`, 'bot');
+            return;
+        }
 
-    const data = resp.data;
-    const msgs = Array.isArray(data.messages) ? data.messages : [];
-    if (!msgs.length) {
-        addBubble('返答が空でした（messagesがありません）。', 'bot');
-        return;
-    }
+        const data = out.data;
+        const msgs = Array.isArray(data.messages) ? data.messages : [];
+        if (!msgs.length) {
+            addBubble('返答が空でした（messagesがありません）。', 'bot');
+            return;
+        }
 
-    for (const m of msgs) {
-        if (m.type === 'text') addBubble(m.content || '', 'bot');
-        if (m.type === 'products') addProducts(Array.isArray(m.items) ? m.items : []);
+        for (const m of msgs) {
+            if (m.type === 'text') addBubble(m.content || '', 'bot');
+            if (m.type === 'products') addProducts(Array.isArray(m.items) ? m.items : []);
+        }
+    } catch (e) {
+        if (loading?.remove) loading.remove();
+        addBubble(`通信エラー:\n${String(e?.message || e)}`, 'bot');
     }
 }
 
-// ---- Voice (record in sidepanel) ----
-async function startRecording() {
-    if (state.recording) return;
+// ===== 音声（SidePanel内で録音）=====
+const voice = {
+    recording: false,
+    stream: null,
+    recorder: null,
+    chunks: [],
+    timer: null,
+};
 
-    state.recording = true;
-    el.mic.classList.add('recording');
-    el.mic.textContent = '■';
+function setMicUI(on) {
+    voice.recording = !!on;
+    if (voice.recording) {
+        el.mic.classList.add('recording');
+        el.mic.textContent = '■';
+    } else {
+        el.mic.classList.remove('recording');
+        el.mic.textContent = '🎤';
+    }
+}
+
+function cleanupRecording() {
+    setMicUI(false);
+    if (voice.timer) {
+        clearTimeout(voice.timer);
+        voice.timer = null;
+    }
+    if (voice.stream) {
+        try { voice.stream.getTracks().forEach((t) => t.stop()); } catch (_) { }
+        voice.stream = null;
+    }
+    voice.recorder = null;
+    voice.chunks = [];
+}
+
+function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(String(fr.result).split(',')[1] || '');
+        fr.onerror = reject;
+        fr.readAsDataURL(blob);
+    });
+}
+
+async function startRecording() {
+    if (voice.recording) return;
 
     addBubble('🎤 聞いています…', 'bot');
+    setMicUI(true);
 
     try {
-        state.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        state.recorder = new MediaRecorder(state.stream);
-        state.chunks = [];
+        voice.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        voice.recorder = new MediaRecorder(voice.stream);
+        voice.chunks = [];
 
-        state.recorder.ondataavailable = (e) => {
-            if (e.data && e.data.size > 0) state.chunks.push(e.data);
+        voice.recorder.ondataavailable = (e) => {
+            if (e.data && e.data.size > 0) voice.chunks.push(e.data);
         };
 
-        state.recorder.onstop = async () => {
-            await finishRecording();
+        voice.recorder.onstop = async () => {
+            try {
+                const blob = new Blob(voice.chunks, { type: voice.recorder?.mimeType || 'audio/webm' });
+                const audioBase64 = await blobToBase64(blob);
+                cleanupRecording();
+
+                if (!audioBase64) {
+                    addBubble('音声データが空でした。', 'bot');
+                    return;
+                }
+
+                const sttOut = await requestPort(
+                    'AIC_STT',
+                    { audioBase64, mimeType: blob.type || 'audio/webm' },
+                    120000
+                );
+
+                const stt = sttOut?.data;
+                if (!stt || !stt.ok || !stt.text) {
+                    addBubble(`音声認識に失敗しました。\n${stt?.error || sttOut?.error || ''}`, 'bot');
+                    return;
+                }
+
+                await sendChat(stt.text);
+            } catch (e) {
+                cleanupRecording();
+                addBubble(`音声処理エラー:\n${String(e?.message || e)}`, 'bot');
+            }
         };
 
-        state.recorder.start();
+        voice.recorder.start();
 
-        state.timer = setTimeout(() => {
-            stopRecording();
+        voice.timer = setTimeout(() => {
+            try {
+                if (voice.recorder && voice.recorder.state === 'recording') voice.recorder.stop();
+            } catch (_) {
+                cleanupRecording();
+            }
         }, 6500);
     } catch (e) {
         cleanupRecording();
@@ -173,80 +278,31 @@ async function startRecording() {
 
 function stopRecording() {
     try {
-        if (state.recorder && state.recorder.state === 'recording') {
-            state.recorder.stop();
-        } else {
-            cleanupRecording();
-        }
+        if (voice.recorder && voice.recorder.state === 'recording') voice.recorder.stop();
+        else cleanupRecording();
     } catch (_) {
         cleanupRecording();
     }
 }
 
-function cleanupRecording() {
-    state.recording = false;
-    el.mic.classList.remove('recording');
-    el.mic.textContent = '🎤';
+// ===== UI events =====
+el.send.addEventListener('click', () => {
+    const v = el.inp.value;
+    el.inp.value = '';
+    sendChat(v);
+});
 
-    if (state.timer) {
-        clearTimeout(state.timer);
-        state.timer = null;
-    }
-    if (state.stream) {
-        try { state.stream.getTracks().forEach((t) => t.stop()); } catch (_) { }
-        state.stream = null;
-    }
-    state.recorder = null;
-}
-
-async function blobToBase64(blob) {
-    return await new Promise((resolve, reject) => {
-        const fr = new FileReader();
-        fr.onload = () => resolve(String(fr.result).split(',')[1] || '');
-        fr.onerror = reject;
-        fr.readAsDataURL(blob);
-    });
-}
-
-async function finishRecording() {
-    try {
-        const blob = new Blob(state.chunks, { type: state.recorder?.mimeType || 'audio/webm' });
-        const audioBase64 = await blobToBase64(blob);
-
-        cleanupRecording();
-
-        if (!audioBase64) {
-            addBubble('音声データが空でした。', 'bot');
-            return;
-        }
-
-        const sttResp = await sendToBg('AIC_STT', { audioBase64, mimeType: blob.type || 'audio/webm' });
-        const stt = sttResp?.data;
-
-        if (!stt || !stt.ok || !stt.text) {
-            addBubble(`音声認識に失敗しました。\n${stt?.error || sttResp?.error || ''}`, 'bot');
-            return;
-        }
-
-        await sendChat(stt.text);
-    } catch (e) {
-        cleanupRecording();
-        addBubble(`音声処理エラー: ${String(e?.name || e)}`, 'bot');
-    }
-}
-
-// ---- UI events ----
-el.send.addEventListener('click', () => sendChat(el.inp.value));
 el.inp.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
-        sendChat(el.inp.value);
+        const v = el.inp.value;
         el.inp.value = '';
+        sendChat(v);
     }
 });
 
 el.mic.addEventListener('click', () => {
-    if (state.recording) stopRecording();
+    if (voice.recording) stopRecording();
     else startRecording();
 });
 
