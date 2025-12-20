@@ -1,21 +1,14 @@
 // api/chatbot.js  (REPLACE WHOLE FILE)
 //
-// Goal
-// - Generate JD search queries in Simplified Chinese (zh-CN) + a display query in the user's language.
-// - Do NOT invent constraints (especially numeric price limits).
-// - If the user didn't explicitly mention a numeric budget/price limit, NEVER add tokens like "1元以下".
+// Returns:
+// - keyword_zh: the actual Chinese query for JD search (zh-CN)
+// - display_query: keyword-style query in user's language (NOT a sentence)
+// - queries: [{q, lang}, ...]
 //
-// Output (compatible with the extension)
-// {
-//   ok: true,
-//   reply_lang: "<userLang>",
-//   provider: "jd",
-//   site_host: "<host>",
-//   keyword_zh: "<zh query used for JD search>",
-//   display_query: "<natural query in user's language>",
-//   queries: [{q, lang}, ...],
-//   messages: [{ role:"assistant", type:"text", content:"..." }]
-// }
+// Hard requirements:
+// - DO NOT invent constraints (esp numeric budget limits).
+// - If the user didn't explicitly mention a numeric budget, do not add any.
+// - display_query should look like a search bar query: short keywords separated by spaces.
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_API_BASE = process.env.OPENAI_API_BASE || "https://api.openai.com";
@@ -90,35 +83,23 @@ function looksLikeJDQuery(text = "") {
 function normalizeSpaces(s) {
     return String(s || "").replace(/\s+/g, " ").trim();
 }
-function uniq(list) {
-    const seen = new Set();
-    const out = [];
-    for (const x of list || []) {
-        const v = normalizeSpaces(x);
-        if (!v) continue;
-        if (seen.has(v)) continue;
-        seen.add(v);
-        out.push(v);
-    }
-    return out;
-}
-function limitTokensBySpace(q, maxTokens = 8) {
-    const s = normalizeSpaces(q);
-    if (!s) return "";
-    const tokens = s.split(" ").filter(Boolean);
-    if (tokens.length <= maxTokens) return s;
-    return tokens.slice(0, maxTokens).join(" ");
+function normalizeForCompare(s) {
+    return String(s || "")
+        .replace(/[。\.\,，、！!？\?「」『』（）\(\)\[\]【】]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
 }
 
 /**
- * Decide if the user explicitly provided a numeric budget / price limit.
- * If false, we must NOT include any numeric price constraints in queries.
+ * Determine if user explicitly gave numeric budget / price limit.
+ * Examples:
+ * - "10万円", "10000円以下", "under $200", "5000元以内"
  */
 function hasExplicitNumericBudget(userText = "") {
     const s = String(userText || "");
 
     const hasDigit = /\d/.test(s);
-    const hasCurrency = /(円|¥|jpy|yen|元|块|rmb|cny|￥|\$|usd|eur|€|£|gbp|人民币|日元)/i.test(s);
+    const hasCurrency = /(円|¥|jpy|yen|元|块|rmb|cny|￥|\$|usd|eur|€|£|gbp|人民币|日元|万円)/i.test(s);
     const hasLimitWord = /(以下|以内|未満|まで|上限|under|below|less\s+than|up\s+to|<=|<)/i.test(s);
 
     // CJK numerals + currency (covers "一万円", "五千元" etc)
@@ -128,26 +109,70 @@ function hasExplicitNumericBudget(userText = "") {
 }
 
 /**
- * Remove budget-like segments from a query string.
- * Used when the user did NOT explicitly specify a numeric budget.
- *
- * Important: do NOT remove product model numbers (e.g., iPhone 15),
- * so we only remove patterns that include currency/limit words.
+ * Remove budget-like fragments from queries (ONLY used when user didn't give budget explicitly).
+ * Important: do not remove model numbers like "iPhone 15" (no currency words -> safe).
  */
 function stripBudgetConstraints(q = "") {
     let s = String(q || "");
 
-    // Patterns like "1元以下", "5000 CNY", "under 200", "10万円以内"
-    s = s.replace(/\b(?:under|below|less\s+than|up\s+to)\s*\$?\s*\d+(?:\.\d+)?\s*(?:usd|dollars|cny|rmb|jpy|yen|円|元|块)?\b/gi, " ");
-    s = s.replace(/\b\d+(?:\.\d+)?\s*(?:usd|dollars|cny|rmb|jpy|yen|円|¥|￥|元|块|€|eur|£|gbp)\s*(?:以下|以内|未満|まで|上限)?\b/gi, " ");
-    s = s.replace(/\b\d+(?:\.\d+)?\s*(?:以下|以内|未満)\b/gi, " "); // "2000以下" etc
+    // English-like: "under 200", "below $300"
+    s = s.replace(/(?:under|below|less\s+than|up\s+to)\s*\$?\s*\d+(?:\.\d+)?\s*(?:usd|dollars|cny|rmb|jpy|yen|円|元|块|人民币)?/gi, " ");
 
-    // Also remove standalone budget tokens often generated in zh
-    s = s.replace(/\b\d{1,6}\s*(?:元|块)\s*(?:以下|以内)\b/gi, " ");
+    // Currencies: "10万円", "5000元以下", "$200", "3000 CNY"
+    s = s.replace(/\d+(?:\.\d+)?\s*(?:万円|円|¥|￥|元|块|人民币|日元|jpy|yen|cny|rmb|usd|\$|eur|€|gbp|£)\s*(?:以下|以内|未満|まで|上限)?/gi, " ");
 
-    // Clean extra spaces/punct
+    // "2000以下" style
+    s = s.replace(/\d+(?:\.\d+)?\s*(?:以下|以内|未満)/gi, " ");
+
+    // Cleanup punctuation/spaces
     s = s.replace(/[，,。．・/／|｜]+/g, " ");
     return normalizeSpaces(s);
+}
+
+function looksTooSentenceLike(displayQuery = "", userLang = "en-US") {
+    const s = String(displayQuery || "");
+    if (!s) return true;
+
+    // contains typical sentence punctuation
+    if (/[。！？\?!.]/.test(s)) return true;
+
+    const b = langBase(userLang);
+    if (b === "ja") {
+        // polite endings etc
+        if (/(です|ます|ください|お願い|欲しい|ほしい|探して|教えて|おすすめ)/.test(s)) return true;
+    }
+    if (b === "en") {
+        if (/\b(i want|i'm looking for|can you|please|recommend)\b/i.test(s)) return true;
+    }
+    return false;
+}
+
+/**
+ * Fallback: make a "search bar keywords" string when LLM output is too sentence-like.
+ * (Mainly for Japanese.)
+ */
+function fallbackDisplayQuery(userText = "", userLang = "en-US") {
+    let s = String(userText || "");
+
+    // general punctuation -> spaces
+    s = s.replace(/[。\n\r\t]/g, " ");
+    s = s.replace(/[、，,。．・/／|｜]+/g, " ");
+    s = s.replace(/\s+/g, " ").trim();
+
+    const b = langBase(userLang);
+    if (b === "ja") {
+        // remove typical filler / polite words
+        s = s
+            .replace(/(が|を|は)?(欲しい|ほしい)(です|だ)?/g, " ")
+            .replace(/(探して(ます|います)?|探す|検索|見つけて|教えて|おすすめ|お願い(します)?|ください)/g, " ")
+            .replace(/(くらい|ぐらい|かな|かも|です|ます|ですか|でしょう)/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+    }
+
+    // keep it short-ish
+    const tokens = s.split(" ").filter(Boolean);
+    return tokens.slice(0, 10).join(" ").trim() || String(userText || "").trim();
 }
 
 async function openaiJson(messages, timeoutMs = 12000) {
@@ -180,33 +205,37 @@ async function openaiJson(messages, timeoutMs = 12000) {
 }
 
 /**
- * Build a JD query plan using OpenAI.
- * - Returns { display_query, zh_query, en_query }
+ * Build query plan:
+ * - display_query: user's language, keyword-style (spaces between tokens)
+ * - jd_query_zh: Simplified Chinese, keyword-style
+ * - en_query: English fallback
  */
 async function buildQueryPlanLLM({ userText, pageContext, userLang, siteHost, allowBudget }) {
     const ctx = String(pageContext || "").slice(0, 900);
 
     const system = `
-You are a shopping-search query writer.
+You write SHORT SEARCH-BAR queries for e-commerce.
 
 Return JSON with EXACT keys:
 {
-  "display_query": "...",   // in the user's language (${userLang})
-  "jd_query_zh": "...",     // Simplified Chinese for JD search bar
-  "en_query": "..."         // short English fallback
+  "display_query": "...",   // user's language (${userLang}), keyword-style (NOT a sentence)
+  "jd_query_zh": "...",     // Simplified Chinese for JD search bar, keyword-style
+  "en_query": "..."         // short English fallback query
 }
 
-Rules:
-- DO NOT invent constraints not stated by the user.
-- Especially: NEVER invent numeric price limits. Only include a numeric budget/price limit if the user explicitly mentioned one.
-- If the user did NOT mention a numeric budget, do not include words like "元以下" / "块以内" / "under 10" etc.
-- Keep each query short and natural (not a sentence).
-- For jd_query_zh:
-  - Use Simplified Chinese.
-  - Prefer spaces between major tokens.
-  - Avoid punctuation.
-  - If the user mentions a budget in JPY, you may convert approximately using 1 CNY ≈ 20 JPY (but only if budget was explicit).
-- Use PageContext only if the user refers to it (e.g., "this page", "same as this").`;
+Rules (very important):
+- DO NOT invent any constraints not stated by the user.
+- NEVER invent numeric price limits.
+  - Only include numeric budget/price if BudgetExplicit is YES.
+- Make "display_query" look like what users type into a search bar:
+  - no polite endings, no full sentences, no punctuation.
+  - use spaces between major tokens where possible.
+  - keep it short (around 3-8 tokens).
+- For "jd_query_zh":
+  - Simplified Chinese, tokens separated by spaces, no punctuation, <= 8 tokens.
+  - If BudgetExplicit is YES and budget is in JPY, you MAY convert using 1 CNY ≈ 20 JPY.
+- Use PageContext ONLY if the user refers to it ("this page", "same as this").
+`;
 
     const user = `
 User request:
@@ -214,10 +243,10 @@ ${userText}
 
 User language: ${userLang}
 Current host: ${siteHost || "(none)"}
+BudgetExplicit: ${allowBudget ? "YES" : "NO"}
 
 PageContext:
 ${ctx || "(none)"}
-BudgetExplicit: ${allowBudget ? "YES" : "NO"}
 `;
 
     const obj = await openaiJson(
@@ -227,37 +256,49 @@ BudgetExplicit: ${allowBudget ? "YES" : "NO"}
 
     if (!obj) return null;
 
-    const display = normalizeSpaces(obj.display_query || "");
-    const zh = normalizeSpaces(obj.jd_query_zh || "");
-    const en = normalizeSpaces(obj.en_query || "");
-
-    return { display_query: display, zh_query: zh, en_query: en };
+    return {
+        display_query: normalizeSpaces(obj.display_query || ""),
+        zh_query: normalizeSpaces(obj.jd_query_zh || ""),
+        en_query: normalizeSpaces(obj.en_query || ""),
+    };
 }
 
-async function generateMultiQueries({ userText, pageContext, userLang, siteLang, siteHost, isJDMode }) {
+function uniqQueries(arr) {
+    const seen = new Set();
+    const out = [];
+    for (const it of arr || []) {
+        const q = normalizeSpaces(it?.q || "");
+        const lang = normalizeSpaces(it?.lang || "");
+        if (!q || !lang) continue;
+        const key = `${q}||${lang}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ q, lang });
+    }
+    return out;
+}
+
+function limitTokensBySpace(q, maxTokens = 8) {
+    const s = normalizeSpaces(q);
+    if (!s) return "";
+    const tokens = s.split(" ").filter(Boolean);
+    if (tokens.length <= maxTokens) return s;
+    return tokens.slice(0, maxTokens).join(" ");
+}
+
+async function generateMultiQueries({ userText, pageContext, userLang, siteHost, isJDMode }) {
     const allowBudget = hasExplicitNumericBudget(userText);
 
-    // No OpenAI -> minimal fallback
+    // No OpenAI -> fallback
     if (!OPENAI_API_KEY) {
-        const zhFallback = isJDMode ? userText : "";
-        const displayFallback = userText;
-        const enFallback = userText;
-
-        const queries = uniq([
-            isJDMode ? { q: zhFallback, lang: "zh-CN" } : null,
-            { q: displayFallback, lang: userLang },
-            { q: enFallback, lang: "en-US" },
-        ].filter(Boolean).map(x => `${x.q}||${x.lang}`))
-            .map((k) => {
-                const [q, lang] = k.split("||");
-                return { q: normalizeSpaces(q), lang: normalizeSpaces(lang) };
-            });
-
-        return {
-            display_query: displayFallback,
-            keyword_zh: normalizeSpaces(zhFallback) || "",
-            queries
-        };
+        const display_query = fallbackDisplayQuery(userText, userLang);
+        const keyword_zh = isJDMode ? "" : "";
+        const queries = uniqQueries([
+            isJDMode ? { q: keyword_zh, lang: "zh-CN" } : null,
+            { q: display_query, lang: userLang },
+            { q: display_query, lang: "en-US" },
+        ].filter(Boolean));
+        return { display_query, keyword_zh, queries };
     }
 
     const plan = await buildQueryPlanLLM({
@@ -268,61 +309,52 @@ async function generateMultiQueries({ userText, pageContext, userLang, siteLang,
         allowBudget
     });
 
-    let display_query = normalizeSpaces(plan?.display_query || userText);
+    let display_query = normalizeSpaces(plan?.display_query || "");
     let zh_query = normalizeSpaces(plan?.zh_query || "");
-    let en_query = normalizeSpaces(plan?.en_query || userText);
+    let en_query = normalizeSpaces(plan?.en_query || "");
 
-    // If budget NOT explicit, force-remove any budget constraints even if the model tried.
+    // If budget is NOT explicit, force-remove any budget-like fragments.
     if (!allowBudget) {
         display_query = stripBudgetConstraints(display_query);
         zh_query = stripBudgetConstraints(zh_query);
         en_query = stripBudgetConstraints(en_query);
     }
 
+    // Ensure display_query is keyword-style (not sentence-like)
+    const cmpUser = normalizeForCompare(userText);
+    const cmpDisp = normalizeForCompare(display_query);
+    if (!display_query || cmpDisp === cmpUser || looksTooSentenceLike(display_query, userLang)) {
+        display_query = fallbackDisplayQuery(userText, userLang);
+    }
+
     // Ensure zh query exists in JD mode
     if (isJDMode && !zh_query) {
-        // fallback: use user text (will still work sometimes) but keep short
+        // fallback: very short version from userText (still better than nothing)
         zh_query = normalizeSpaces(userText);
     }
 
-    // Keep them short
+    // Enforce short queries
     display_query = normalizeSpaces(display_query);
-    en_query = normalizeSpaces(en_query);
+    en_query = normalizeSpaces(en_query || display_query);
     zh_query = limitTokensBySpace(zh_query, 8);
 
-    // Build zh variants (if budget explicit, add a no-budget variant for recall)
-    const zhNoBudget = stripBudgetConstraints(zh_query);
-    const zhVariants = uniq([
-        zh_query,
-        allowBudget && zhNoBudget && zhNoBudget !== zh_query ? zhNoBudget : ""
-    ].filter(Boolean));
+    // If budget explicit, provide a no-budget zh variant for recall
+    const zh_no_budget = allowBudget ? stripBudgetConstraints(zh_query) : zh_query;
+    const zh_variants = [];
+    if (isJDMode && zh_query) zh_variants.push(zh_query);
+    if (isJDMode && allowBudget && zh_no_budget && zh_no_budget !== zh_query) zh_variants.push(zh_no_budget);
 
     const queries = [];
-    const push = (q, lang) => {
-        const qq = normalizeSpaces(q);
-        const ll = normalizeSpaces(lang);
-        if (!qq || !ll) return;
-        // Final safety: if budget not explicit, do not let budget-ish strings pass
-        const safeQ = allowBudget ? qq : stripBudgetConstraints(qq);
-        if (!safeQ) return;
-        const key = `${safeQ}||${ll}`;
-        if (queries.some(x => `${x.q}||${x.lang}` === key)) return;
-        queries.push({ q: safeQ, lang: ll });
-    };
+    for (const q of zh_variants) queries.push({ q, lang: "zh-CN" });
+    queries.push({ q: display_query, lang: userLang });
+    queries.push({ q: en_query || display_query, lang: "en-US" });
 
-    if (isJDMode) {
-        for (const q of zhVariants) push(q, "zh-CN");
-    } else {
-        push(userText, siteLang || userLang);
-    }
-
-    push(display_query, userLang);
-    push(en_query, "en-US");
+    const finalQueries = uniqQueries(queries);
 
     const keyword_zh =
-        (isJDMode ? (queries.find(q => String(q.lang).toLowerCase().startsWith("zh"))?.q || zh_query) : "") || "";
+        (isJDMode ? (finalQueries.find(x => String(x.lang).toLowerCase().startsWith("zh"))?.q || zh_query) : "") || "";
 
-    return { display_query, keyword_zh, queries };
+    return { display_query, keyword_zh, queries: finalQueries };
 }
 
 module.exports = async (req, res) => {
@@ -349,18 +381,16 @@ module.exports = async (req, res) => {
         const userLang = hintNorm || toBcp47(base);
 
         const ui = getUiStrings(userLang);
-        const siteLang = isJDMode ? "zh-CN" : userLang;
 
         const { display_query, keyword_zh, queries } = await generateMultiQueries({
             userText: safeUserText,
             pageContext: safeContext,
             userLang,
-            siteLang,
             siteHost: host,
             isJDMode
         });
 
-        const payload = {
+        return res.status(200).json({
             ok: true,
             reply_lang: userLang,
             provider: isJDMode ? "jd" : providerNorm,
@@ -368,11 +398,9 @@ module.exports = async (req, res) => {
             keyword_zh: String(keyword_zh || "").trim(),
             display_query: String(display_query || safeUserText).trim(),
             queries: Array.isArray(queries) ? queries : [],
-            messages: [{ role: "assistant", type: "text", content: ui.refine }]
-        };
-
-        // extension does scraping
-        return res.status(200).json(payload);
+            messages: [{ role: "assistant", type: "text", content: ui.refine }],
+            clientScrape: !!clientScrape,
+        });
 
     } catch (e) {
         console.error("[chatbot] error", e);

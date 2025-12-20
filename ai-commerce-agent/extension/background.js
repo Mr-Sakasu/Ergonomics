@@ -1,23 +1,21 @@
 // extension/background.js (REPLACE WHOLE FILE)
-// AI Commerce Agent — JD-only search via background tab + content script (jd_scraper.js)
-//
-// Changes in this version:
-// 1) Always scrape with zh-CN query (JD search is most reliable in Chinese).
-// 2) UI shows "Query: <display_query>" in the user's language (NOT the zh query).
-// 3) Adds AIC_UI_INIT port endpoint to fetch localized initial text from /api/ui-init.
+// JD-only search via background tab + content script (jd_scraper.js)
+// + AIC_UI_INIT + AIC_LANG_DETECT
+// Fix: Accept ANY input language; if payload.lang is wrong, re-detect locally via chrome.i18n.detectLanguage.
 
-console.log("[AIC] BG loaded (JD scrape via content script v2 + ui-init)");
+console.log("[AIC] BG loaded (JD scrape via content script v4 + chrome detectLanguage)");
 
 const API_BASE = "https://ergonomics-mu.vercel.app/api";
 
 // --- timeouts ---
-const CHATBOT_TIMEOUT_MS = 12000;  // longer OK (user accepts slight delay)
+const CHATBOT_TIMEOUT_MS = 12000;
 const UIINIT_TIMEOUT_MS = 12000;
-const SCRAPE_TIMEOUT_MS = 20000;   // wait content script result per tab
-const TOTAL_BUDGET_MS = 30000;     // overall per user request
-const MAX_QUERY_TRIES = 2;         // try at most 2 zh candidates
+const LANGDETECT_TIMEOUT_MS = 9000;
 
-// If you ever need to fight background tab throttling, set true.
+const SCRAPE_TIMEOUT_MS = 20000;
+const TOTAL_BUDGET_MS = 30000;
+const MAX_QUERY_TRIES = 2;
+
 const ENABLE_BRIEF_ACTIVATE = false;
 const BRIEF_ACTIVATE_MS = 900;
 
@@ -30,34 +28,65 @@ function fetchWithTimeout(url, options = {}, ms = 12000) {
 }
 
 function langBase(lang = "") {
-    const s = String(lang || "").toLowerCase();
-    return s.split(/[-_]/)[0] || "en";
+    const s = String(lang || "").trim();
+    if (!s) return "en";
+    return s.toLowerCase().split(/[-_]/)[0] || "en";
 }
 
-function uiStrings(userLang = "en-US") {
+function normalizeLangTag(lang) {
+    const s = String(lang || "").trim();
+    if (!s) return "en-US";
+    if (/^zh[-_](cn|tw|hk)$/i.test(s)) {
+        const [a, b] = s.split(/[-_]/);
+        return `${a.toLowerCase()}-${b.toUpperCase()}`;
+    }
+    if (/^[a-z]{2}$/i.test(s)) {
+        const b = s.toLowerCase();
+        if (b === "en") return "en-US";
+        if (b === "ja") return "ja-JP";
+        if (b === "zh") return "zh-CN";
+        if (b === "ko") return "ko-KR";
+        return b;
+    }
+    const parts = s.split(/[-_]/);
+    if (parts.length === 1) return parts[0].toLowerCase();
+    return parts
+        .map((p, i) => {
+            if (i === 0) return p.toLowerCase();
+            if (p.length === 2) return p.toUpperCase();
+            if (p.length === 4) return p[0].toUpperCase() + p.slice(1).toLowerCase();
+            return p;
+        })
+        .join("-");
+}
+
+// ----- fallback strings (still used if your /ui-init does not provide these keys) -----
+function uiStringsFallback(userLang = "en-US") {
     const b = langBase(userLang);
-    if (b === "ja") return {
-        found: "以下が見つかりました。",
-        notFound: "すみません、JD内で見つかりませんでした。キーワードや条件を少し変えてみてください。",
-        blocked: "JD側で検証が出た可能性があります。JDのページで一度検証してからもう一度試してください。",
-        timeout: "処理がタイムアウトしました。JD側が重い/検証が出ている可能性があります。",
-        redirected: "JDの検索ページに到達できませんでした（リダイレクト）。JDで一度検索できる状態か確認してください。",
-        refine: "価格帯・ブランド・用途を言ってくれればさらに絞れます。",
-        openSearch: "JDで検索を開く",
-        queryLabel: "検索ワード",
-        err: "通信に失敗しました（サーバー/ネットワーク）。",
-    };
-    if (b === "zh") return {
-        found: "找到了以下商品。",
-        notFound: "这次在京东没找到，请补充更多关键词或条件。",
-        blocked: "京东可能触发了验证，请先在京东页面完成验证后再试一次。",
-        timeout: "处理超时了，京东页面可能很重或出现验证。",
-        redirected: "无法进入京东搜索页（发生跳转）。请确认你在浏览器里能正常搜索京东。",
-        refine: "告诉我预算/品牌/用途，我可以再筛选。",
-        openSearch: "打开京东搜索",
-        queryLabel: "搜索词",
-        err: "网络/服务端请求失败。",
-    };
+    if (b === "ja")
+        return {
+            found: "以下が見つかりました。",
+            notFound: "すみません、JD内で見つかりませんでした。キーワードや条件を少し変えてみてください。",
+            blocked: "JD側で検証が出た可能性があります。JDのページで一度検証してからもう一度試してください。",
+            timeout: "処理がタイムアウトしました。JD側が重い/検証が出ている可能性があります。",
+            redirected: "JDの検索ページに到達できませんでした（リダイレクト）。JDで一度検索できる状態か確認してください。",
+            refine: "価格帯・ブランド・用途を言ってくれればさらに絞れます。",
+            openSearch: "JDで検索を開く",
+            queryLabel: "検索ワード",
+            err: "通信に失敗しました（サーバー/ネットワーク）。",
+        };
+    if (b === "zh")
+        return {
+            found: "找到了以下商品。",
+            notFound: "这次在京东没找到，请补充更多关键词或条件。",
+            blocked: "京东可能触发了验证，请先在京东页面完成验证后再试一次。",
+            timeout: "处理超时了，京东页面可能很重或出现验证。",
+            redirected: "无法进入京东搜索页（发生跳转）。请确认你在浏览器里能正常搜索京东。",
+            refine: "告诉我预算/品牌/用途，我可以再筛选。",
+            openSearch: "打开京东搜索",
+            queryLabel: "搜索词",
+            err: "网络/服务端请求失败。",
+        };
     return {
         found: "Here are the products I found.",
         notFound: "I couldn’t find it on JD this time. Please add more keywords or constraints.",
@@ -69,6 +98,72 @@ function uiStrings(userLang = "en-US") {
         queryLabel: "Query",
         err: "Network/server request failed.",
     };
+}
+
+// OPTIONAL: if /ui-init returns extra keys (found/refine/...), we use them.
+const uiTextCache = new Map(); // lang -> pack
+async function getUiTextPack(lang) {
+    const L = normalizeLangTag(lang);
+    if (uiTextCache.has(L)) return uiTextCache.get(L);
+
+    const fallback = uiStringsFallback(L);
+    let remote = null;
+    try {
+        const r = await fetchWithTimeout(
+            `${API_BASE}/ui-init`,
+            { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lang: L }) },
+            UIINIT_TIMEOUT_MS
+        );
+        remote = await r.json().catch(() => null);
+    } catch (_) {
+        remote = null;
+    }
+
+    // remote may or may not include these keys; merge safely
+    const pack = {
+        // existing fields that sidepanel uses (keep them too)
+        lang: normalizeLangTag(remote?.lang || L),
+        welcome: remote?.welcome || "",
+        placeholder: remote?.placeholder || "",
+        open_button: remote?.open_button || "Open",
+        no_image: remote?.no_image || "No image",
+        searching: remote?.searching || "🔎 Searching…",
+
+        // text fields used in background
+        found: remote?.found || fallback.found,
+        notFound: remote?.notFound || fallback.notFound,
+        blocked: remote?.blocked || fallback.blocked,
+        timeout: remote?.timeout || fallback.timeout,
+        redirected: remote?.redirected || fallback.redirected,
+        refine: remote?.refine || fallback.refine,
+        openSearch: remote?.openSearch || fallback.openSearch,
+        queryLabel: remote?.queryLabel || fallback.queryLabel,
+        err: remote?.err || fallback.err,
+    };
+
+    uiTextCache.set(pack.lang, pack);
+    return pack;
+}
+
+// Local language detection (ANY language) using chrome.i18n.detectLanguage
+function detectLangByChrome(text) {
+    return new Promise((resolve) => {
+        try {
+            if (!chrome?.i18n?.detectLanguage) return resolve(null);
+            chrome.i18n.detectLanguage(String(text || ""), (res) => {
+                const err = chrome.runtime?.lastError;
+                if (err || !res) return resolve(null);
+
+                const langs = Array.isArray(res.languages) ? res.languages : [];
+                langs.sort((a, b) => (b.percentage || 0) - (a.percentage || 0));
+                const best = langs.find((x) => x?.language && x.language !== "und" && (x.percentage || 0) >= 20);
+                if (!best?.language) return resolve(null);
+                resolve(normalizeLangTag(best.language));
+            });
+        } catch (_) {
+            resolve(null);
+        }
+    });
 }
 
 function buildJdSearchUrl(q) {
@@ -88,6 +183,13 @@ function extractUserQueryText(fullText) {
     if (!s) return "";
     const parts = s.split(/\n\s*\[PageContext\]/i);
     return (parts[0] || "").trim();
+}
+
+function normalizeDisplayQuery(s) {
+    return String(s || "")
+        .replace(/[、，,。．・/／|｜]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
 }
 
 // ---- Promisify chrome.* ----
@@ -117,16 +219,18 @@ function pTabsQueryActive() {
 async function ensureContentScriptRegistered() {
     try {
         const regs = await chrome.scripting.getRegisteredContentScripts();
-        const has = regs.some(r => r.id === "aic_jd_scraper");
+        const has = regs.some((r) => r.id === "aic_jd_scraper");
         if (has) return;
 
-        await chrome.scripting.registerContentScripts([{
-            id: "aic_jd_scraper",
-            matches: ["https://search.jd.com/*"],
-            js: ["jd_scraper.js"],
-            runAt: "document_start",
-            allFrames: true,
-        }]);
+        await chrome.scripting.registerContentScripts([
+            {
+                id: "aic_jd_scraper",
+                matches: ["https://search.jd.com/*"],
+                js: ["jd_scraper.js"],
+                runAt: "document_start",
+                allFrames: true,
+            },
+        ]);
 
         console.log("[AIC] registered content script: aic_jd_scraper");
     } catch (e) {
@@ -140,8 +244,6 @@ chrome.runtime.onInstalled.addListener(() => {
     }
     ensureContentScriptRegistered();
 });
-
-// also try at startup
 ensureContentScriptRegistered();
 
 // ---------------------------
@@ -155,18 +257,24 @@ function finishScrape(jobId, payload) {
 
     pendingScrapes.delete(jobId);
 
-    try { clearTimeout(p.timer); } catch (_) { }
-    try { chrome.tabs.onUpdated.removeListener(p.onUpdated); } catch (_) { }
+    try {
+        clearTimeout(p.timer);
+    } catch (_) { }
+    try {
+        chrome.tabs.onUpdated.removeListener(p.onUpdated);
+    } catch (_) { }
 
-    // Close the background tab
     if (p.tabId != null) {
-        try { chrome.tabs.remove(p.tabId); } catch (_) { }
+        try {
+            chrome.tabs.remove(p.tabId);
+        } catch (_) { }
     }
 
-    try { p.resolve(payload); } catch (_) { }
+    try {
+        p.resolve(payload);
+    } catch (_) { }
 }
 
-// Receive result from content script
 chrome.runtime.onMessage.addListener((msg) => {
     if (msg?.type !== "JD_SCRAPE_RESULT") return;
 
@@ -222,7 +330,6 @@ async function scrapeJdByTab(zhQuery, timeoutMs = SCRAPE_TIMEOUT_MS) {
     const tab = await pTabsCreate({ url, active: false });
     console.log("[AIC] created search tab", { tabId: tab.id, jobId, url });
 
-    // If search.jd.com redirects to www.jd.com, content script won't run.
     const onUpdated = (tabId, changeInfo) => {
         if (tabId !== tab.id) return;
         if (changeInfo?.url) {
@@ -248,7 +355,6 @@ async function scrapeJdByTab(zhQuery, timeoutMs = SCRAPE_TIMEOUT_MS) {
         });
     });
 
-    // Optional activate
     if (ENABLE_BRIEF_ACTIVATE && prevActiveId != null) {
         try {
             await pTabsUpdate(tab.id, { active: true });
@@ -257,7 +363,6 @@ async function scrapeJdByTab(zhQuery, timeoutMs = SCRAPE_TIMEOUT_MS) {
         } catch (_) { }
     }
 
-    // Fill missing prices
     if (payload?.ok && Array.isArray(payload.items) && payload.items.length > 0) {
         const need = payload.items.filter((it) => !it.price).map((it) => it.sku).filter(Boolean);
         if (need.length) {
@@ -274,19 +379,52 @@ async function scrapeJdByTab(zhQuery, timeoutMs = SCRAPE_TIMEOUT_MS) {
 }
 
 // ---------------------------
-// Helpers: pick zh candidates + display query
+// UI init + Lang detect handlers (server)
+// ---------------------------
+async function handleUiInit(payload = {}) {
+    const lang = normalizeLangTag(payload.lang || "en-US");
+    try {
+        const r = await fetchWithTimeout(
+            `${API_BASE}/ui-init`,
+            { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lang }) },
+            UIINIT_TIMEOUT_MS
+        );
+        const data = await r.json().catch(() => null);
+        return { ok: true, data: data || { ok: false } };
+    } catch (e) {
+        return { ok: true, data: { ok: false, error: String(e?.name || e) } };
+    }
+}
+
+async function handleLangDetect(payload = {}) {
+    const text = String(payload.text || "");
+    const defaultLang = normalizeLangTag(payload.defaultLang || "en-US");
+    try {
+        const r = await fetchWithTimeout(
+            `${API_BASE}/lang-detect`,
+            { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, defaultLang }) },
+            LANGDETECT_TIMEOUT_MS
+        );
+        const data = await r.json().catch(() => null);
+        return { ok: true, data: data || { ok: false, lang: defaultLang } };
+    } catch (e) {
+        return { ok: true, data: { ok: true, lang: defaultLang, error: String(e?.name || e) } };
+    }
+}
+
+// ---------------------------
+// pick candidates
 // ---------------------------
 function pickZhCandidates(serverData) {
     const list = Array.isArray(serverData?.queries) ? serverData.queries : [];
     const zh = list
-        .filter(it => String(it?.lang || "").toLowerCase().startsWith("zh"))
-        .map(it => String(it?.q || "").trim())
+        .filter((it) => String(it?.lang || "").toLowerCase().startsWith("zh"))
+        .map((it) => String(it?.q || "").trim())
         .filter(Boolean);
 
     const keywordZh = String(serverData?.keyword_zh || "").trim();
     const merged = [...zh, keywordZh].filter(Boolean);
 
-    // dedupe
     const out = [];
     const seen = new Set();
     for (const q of merged) {
@@ -300,49 +438,31 @@ function pickZhCandidates(serverData) {
 
 function pickDisplayQuery(serverData, fallbackUserQuery) {
     const dq = String(serverData?.display_query || "").trim();
-    return dq || String(fallbackUserQuery || "").trim();
-}
-
-// ---------------------------
-// UI init handler (welcome + placeholder)
-// ---------------------------
-async function handleUiInit(payload = {}) {
-    const lang = payload.lang || "en-US";
-
-    try {
-        const r = await fetchWithTimeout(
-            `${API_BASE}/ui-init`,
-            {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ lang }),
-            },
-            UIINIT_TIMEOUT_MS
-        );
-
-        const data = await r.json().catch(() => null);
-        if (data && data.ok) return { ok: true, data };
-        return { ok: true, data: { ok: false, error: "ui_init_failed" } };
-    } catch (e) {
-        return { ok: true, data: { ok: false, error: String(e?.name || e) } };
-    }
+    return normalizeDisplayQuery(dq || fallbackUserQuery || "");
 }
 
 // ---------------------------
 // Main handler: AI_CHAT
 // ---------------------------
 async function handleAiChat(payload = {}) {
-    const replyLang = payload.lang || "en-US";
-    const ui = uiStrings(replyLang);
-
     const t0 = Date.now();
 
     const fullText = String(payload.text || "").trim();
     const userQuery = extractUserQueryText(fullText) || fullText;
 
-    console.log("[AIC] AI_CHAT start", { userQuery });
+    // Prefer payload.lang from sidepanel, but guard against wrong fallback ("en-US")
+    let replyLang = normalizeLangTag(payload.lang || "en-US");
+    const chromeDetected = await detectLangByChrome(userQuery);
+    if (chromeDetected && langBase(chromeDetected) !== langBase(replyLang)) {
+        // if sidepanel was wrong, fix here
+        replyLang = chromeDetected;
+    }
 
-    // 1) Ask server to generate query variants + display_query
+    const ui = await getUiTextPack(replyLang);
+
+    console.log("[AIC] AI_CHAT start", { userQuery, replyLang });
+
+    // 1) server generates queries + display_query
     let serverData = null;
     try {
         const r = await fetchWithTimeout(
@@ -350,7 +470,7 @@ async function handleAiChat(payload = {}) {
             {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ ...(payload || {}), clientScrape: true }),
+                body: JSON.stringify({ ...(payload || {}), lang: replyLang, clientScrape: true }),
             },
             CHATBOT_TIMEOUT_MS
         );
@@ -361,27 +481,12 @@ async function handleAiChat(payload = {}) {
     }
 
     const displayQuery = pickDisplayQuery(serverData, userQuery);
-
-    // 2) JD scraping must use zh queries
     const zhCandidates = pickZhCandidates(serverData);
+
+    console.log("[AIC] displayQuery", displayQuery);
     console.log("[AIC] zhCandidates", zhCandidates);
 
-    if (!zhCandidates.length) {
-        // no zh query -> we can't guarantee JD search quality
-        return {
-            ok: true,
-            data: {
-                ok: true,
-                reply_lang: replyLang,
-                messages: [
-                    { role: "assistant", type: "text", content: ui.err },
-                    { role: "assistant", type: "text", content: `${ui.queryLabel}: ${displayQuery}` },
-                ],
-            },
-        };
-    }
-
-    // 3) Try scraping with at most MAX_QUERY_TRIES zh queries
+    // 2) scraping
     for (const zhQ of zhCandidates.slice(0, MAX_QUERY_TRIES)) {
         if (Date.now() - t0 > TOTAL_BUDGET_MS) break;
 
@@ -398,7 +503,7 @@ async function handleAiChat(payload = {}) {
             blocked: r?.blocked,
             timeout: r?.timeout,
             redirected: r?.redirected,
-            n: r?.items?.length
+            n: r?.items?.length,
         });
 
         const openSearchItem = {
@@ -406,7 +511,7 @@ async function handleAiChat(payload = {}) {
             url: buildJdSearchUrl(zhQ),
             price: "",
             image: "",
-            source: "JD"
+            source: "JD",
         };
 
         if (r?.blocked) {
@@ -417,7 +522,7 @@ async function handleAiChat(payload = {}) {
                     reply_lang: replyLang,
                     messages: [
                         { role: "assistant", type: "text", content: ui.blocked },
-                        { role: "assistant", type: "text", content: `${ui.queryLabel}: ${displayQuery}` },
+                        { role: "assistant", type: "text", content: `(${ui.queryLabel}: ${displayQuery})` },
                         { role: "assistant", type: "products", items: [openSearchItem] },
                     ],
                 },
@@ -432,7 +537,7 @@ async function handleAiChat(payload = {}) {
                     reply_lang: replyLang,
                     messages: [
                         { role: "assistant", type: "text", content: ui.redirected },
-                        { role: "assistant", type: "text", content: `${ui.queryLabel}: ${displayQuery}` },
+                        { role: "assistant", type: "text", content: `(${ui.queryLabel}: ${displayQuery})` },
                         { role: "assistant", type: "products", items: [openSearchItem] },
                     ],
                 },
@@ -447,7 +552,7 @@ async function handleAiChat(payload = {}) {
                     reply_lang: replyLang,
                     messages: [
                         { role: "assistant", type: "text", content: ui.timeout },
-                        { role: "assistant", type: "text", content: `${ui.queryLabel}: ${displayQuery}` },
+                        { role: "assistant", type: "text", content: `(${ui.queryLabel}: ${displayQuery})` },
                         { role: "assistant", type: "products", items: [openSearchItem] },
                     ],
                 },
@@ -455,7 +560,8 @@ async function handleAiChat(payload = {}) {
         }
 
         if (r?.ok && Array.isArray(r.items) && r.items.length > 0) {
-            const items = r.items.slice(0, 6).map((it) => ({
+            // 5 items only
+            const items = r.items.slice(0, 5).map((it) => ({
                 title: String(it.title || ""),
                 description: "",
                 price: String(it.price || ""),
@@ -479,7 +585,7 @@ async function handleAiChat(payload = {}) {
         }
     }
 
-    // 4) Not found
+    // Not found
     const openQ = zhCandidates[0] || userQuery;
     return {
         ok: true,
@@ -488,7 +594,7 @@ async function handleAiChat(payload = {}) {
             reply_lang: replyLang,
             messages: [
                 { role: "assistant", type: "text", content: serverData ? ui.notFound : ui.err },
-                { role: "assistant", type: "text", content: `${ui.queryLabel}: ${displayQuery}` },
+                { role: "assistant", type: "text", content: `(${ui.queryLabel}: ${displayQuery})` },
                 { role: "assistant", type: "products", items: [{ title: ui.openSearch, url: buildJdSearchUrl(openQ), price: "", image: "", source: "JD" }] },
                 { role: "assistant", type: "text", content: ui.refine },
             ],
@@ -497,7 +603,7 @@ async function handleAiChat(payload = {}) {
 }
 
 // ---------------------------
-// (Optional) STT handler
+// STT handler (unchanged)
 // ---------------------------
 async function handleStt(payload = {}) {
     try {
@@ -513,9 +619,13 @@ async function handleStt(payload = {}) {
     }
 }
 
-// ===== Port messaging (sidepanel) =====
+// ===== Port messaging =====
 function safePortPost(port, msg) {
-    try { port.postMessage(msg); } catch (e) { console.warn("[AIC] port.postMessage failed", e); }
+    try {
+        port.postMessage(msg);
+    } catch (e) {
+        console.warn("[AIC] port.postMessage failed", e);
+    }
 }
 
 chrome.runtime.onConnect.addListener((port) => {
@@ -532,6 +642,11 @@ chrome.runtime.onConnect.addListener((port) => {
             if (type === "AIC_UI_INIT") {
                 const out = await handleUiInit(payload);
                 safePortPost(port, { type: "AIC_UI_INIT_RESULT", jobId, out });
+                return;
+            }
+            if (type === "AIC_LANG_DETECT") {
+                const out = await handleLangDetect(payload);
+                safePortPost(port, { type: "AIC_LANG_DETECT_RESULT", jobId, out });
                 return;
             }
             if (type === "AI_CHAT") {
