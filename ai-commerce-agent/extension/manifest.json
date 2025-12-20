@@ -6,13 +6,12 @@
   "permissions": [
     "sidePanel",
     "tabs",
-    "scripting",
-    "audioCapture"
+    "scripting"
   ],
   "host_permissions": [
     "https://ergonomics-mu.vercel.app/*",
-    "https://*.jd.com/*",
-    "https://jd.com/*",
+    "https://search.jd.com/*",
+    "https://item.jd.com/*",
     "https://p.3.cn/*"
   ],
   "background": {
@@ -23,5 +22,17 @@
   },
   "side_panel": {
     "default_path": "sidepanel.html"
-  }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://search.jd.com/*"
+      ],
+      "js": [
+        "jd_scraper.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ]
 }
