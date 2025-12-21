@@ -275,16 +275,42 @@ function finishScrape(jobId, payload) {
     } catch (_) { }
 }
 
-chrome.runtime.onMessage.addListener((msg) => {
-    if (msg?.type !== "JD_SCRAPE_RESULT") return;
+// NOTE: This listener serves TWO purposes:
+//  1) Receive JD_SCRAPE_RESULT from jd_scraper.js (content script)
+//  2) Serve sidepanel RPC via sendMessage (MV3-friendly; SW can sleep/wake)
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    // (1) content script -> background
+    if (msg?.type === "JD_SCRAPE_RESULT") {
+        const jobId = String(msg.jobId || "");
+        if (!jobId) return;
 
-    const jobId = String(msg.jobId || "");
-    if (!jobId) return;
+        const payload = msg.payload || {};
+        console.log("[AIC] JD_SCRAPE_RESULT received", { jobId, ok: payload?.ok, n: payload?.items?.length });
 
-    const payload = msg.payload || {};
-    console.log("[AIC] JD_SCRAPE_RESULT received", { jobId, ok: payload?.ok, n: payload?.items?.length });
+        finishScrape(jobId, payload);
+        return;
+    }
 
-    finishScrape(jobId, payload);
+    // (2) sidepanel -> background (single-shot RPC)
+    const type = msg?.type;
+    const payload = msg?.payload || {};
+    if (!type) return;
+
+    (async () => {
+        try {
+            if (type === "AIC_UI_INIT") return sendResponse(await handleUiInit(payload));
+            if (type === "AIC_LANG_DETECT") return sendResponse(await handleLangDetect(payload));
+            if (type === "AI_CHAT") return sendResponse(await handleAiChat(payload));
+            if (type === "AIC_STT") return sendResponse(await handleStt(payload));
+
+            sendResponse({ ok: false, error: "unknown_type" });
+        } catch (e) {
+            sendResponse({ ok: false, error: String(e?.message || e) });
+        }
+    })();
+
+    // keep the message channel open for async sendResponse
+    return true;
 });
 
 // ---------------------------

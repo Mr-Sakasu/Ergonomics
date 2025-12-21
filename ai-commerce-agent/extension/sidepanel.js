@@ -17,57 +17,40 @@ function addBubble(text, who = "bot") {
     return div;
 }
 
-// ===== Port通信 =====
-const port = chrome.runtime.connect({ name: "aic" });
-const pending = new Map();
+// ===== Background通信 (MV3 Service Worker 対応) =====
+//
+// MV3のService Workerは「何もしていないと勝手に停止」します。
+// Port(connect) を張りっぱなしにすると、停止時に port が切れて
+// 「Connection to background process was lost」になりがちです。
+//
+// そこで sidepanel -> background は sendMessage(単発RPC) に変更します。
+// sendMessage は必要な時に Service Worker を自動で起動してくれるので、
+// 放置しても壊れにくいです。
 
-port.onMessage.addListener((msg) => {
-    const jobId = msg?.jobId;
-    if (!jobId) return;
-
-    const p = pending.get(jobId);
-    if (!p) return;
-    pending.delete(jobId);
-
-    if (msg.type === "AI_CHAT_RESULT") p.resolve(msg.out);
-    else if (msg.type === "AIC_STT_RESULT") p.resolve(msg.out);
-    else if (msg.type === "AIC_UI_INIT_RESULT") p.resolve(msg.out);
-    else if (msg.type === "AIC_LANG_DETECT_RESULT") p.resolve(msg.out);
-    else p.reject(new Error(msg?.error || "unknown_error"));
-});
-
-port.onDisconnect.addListener(() => {
-    for (const [jobId, p] of pending.entries()) {
-        p.reject(new Error("port_disconnected"));
-        pending.delete(jobId);
-    }
-    addBubble("⚠️ Connection to background process was lost. Please reload the extension.", "bot");
-});
-
-function requestPort(type, payload, timeoutMs = 120000) {
-    const jobId = `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+function requestBG(type, payload, timeoutMs = 120000) {
     return new Promise((resolve, reject) => {
-        const t = setTimeout(() => {
-            pending.delete(jobId);
+        let done = false;
+
+        const timer = setTimeout(() => {
+            if (done) return;
+            done = true;
             reject(new Error("timeout"));
         }, timeoutMs);
 
-        pending.set(jobId, {
-            resolve: (v) => {
-                clearTimeout(t);
-                resolve(v);
-            },
-            reject: (e) => {
-                clearTimeout(t);
-                reject(e);
-            },
-        });
-
         try {
-            port.postMessage({ type, jobId, payload });
+            chrome.runtime.sendMessage({ type, payload }, (resp) => {
+                if (done) return;
+                done = true;
+                clearTimeout(timer);
+
+                const err = chrome.runtime?.lastError;
+                if (err) return reject(new Error(err.message || "sendMessage_error"));
+                resolve(resp);
+            });
         } catch (e) {
-            clearTimeout(t);
-            pending.delete(jobId);
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
             reject(e);
         }
     });
@@ -156,7 +139,7 @@ async function ensureUiPack(lang, { showWelcome = false, setPlaceholder = true }
     } catch (_) { }
 
     // fetch via background -> /api/ui-init
-    const out = await requestPort("AIC_UI_INIT", { lang: norm }, 120000);
+    const out = await requestBG("AIC_UI_INIT", { lang: norm }, 120000);
     const data = out?.data;
 
     if (data?.ok) {
@@ -222,7 +205,7 @@ function detectLangByChromeWithTimeout(text, timeoutMs = 700) {
 
 async function detectLangRemote(text, defaultLang) {
     try {
-        const out = await requestPort("AIC_LANG_DETECT", { text, defaultLang }, 120000);
+        const out = await requestBG("AIC_LANG_DETECT", { text, defaultLang }, 120000);
         return normalizeLangTag(out?.data?.lang || defaultLang || "en-US");
     } catch (_) {
         return normalizeLangTag(defaultLang || "en-US");
@@ -313,7 +296,7 @@ async function sendChat(text) {
     const loading = addBubble(ui.searching || "🔎 Searching…", "bot");
 
     try {
-        const out = await requestPort("AI_CHAT", {
+        const out = await requestBG("AI_CHAT", {
             text: q,
             lang: detectedLang, // reply language follows user input language
             provider: "jd",
@@ -407,7 +390,11 @@ async function startRecording() {
                     return;
                 }
 
-                const sttOut = await requestPort("AIC_STT", { audioBase64, mimeType: blob.type || "audio/webm" }, 120000);
+                const sttOut = await requestBG(
+                    "AIC_STT",
+                    { audioBase64, mimeType: blob.type || "audio/webm" },
+                    120000
+                );
                 const stt = sttOut?.data;
 
                 if (!stt || !stt.ok || !stt.text) {
