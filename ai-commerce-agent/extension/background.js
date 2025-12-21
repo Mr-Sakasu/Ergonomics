@@ -1,9 +1,11 @@
 // extension/background.js (REPLACE WHOLE FILE)
-// JD-only search via background tab + content script (jd_scraper.js)
-// + AIC_UI_INIT + AIC_LANG_DETECT
-// Fix: Accept ANY input language; if payload.lang is wrong, re-detect locally via chrome.i18n.detectLanguage.
+// Fixes:
+// - Show actual 5 Chinese search queries + per-query translations (user language) in UI
+// - Keywordify display no longer becomes "あり おすすめ"; use intent anchors (PC -> "PC おすすめ")
+// - Prevent category drift: if intent is confidently electronics/PC, enforce query anchors and filter results by genre
+// - Profile keeps existing keys (aic_orders_v1 / aic_profile_v1)
 
-console.log("[AIC] BG loaded (JD scrape via content script v4 + chrome detectLanguage)");
+console.log("[AIC] BG loaded (JD multi-query x5 + anchors + query list translations v5)");
 
 const API_BASE = "https://ergonomics-mu.vercel.app/api";
 
@@ -11,10 +13,15 @@ const API_BASE = "https://ergonomics-mu.vercel.app/api";
 const CHATBOT_TIMEOUT_MS = 12000;
 const UIINIT_TIMEOUT_MS = 12000;
 const LANGDETECT_TIMEOUT_MS = 9000;
+const TRANSLATE_TIMEOUT_MS = 20000;
 
-const SCRAPE_TIMEOUT_MS = 20000;
-const TOTAL_BUDGET_MS = 30000;
-const MAX_QUERY_TRIES = 2;
+const SCRAPE_TIMEOUT_MS = 18000;
+const ORDERS_TIMEOUT_MS = 120000;
+
+const TOTAL_BUDGET_MS = 70000;
+const QUERY_COUNT = 5;
+const PER_QUERY_TAKE = 12;
+const FINAL_TAKE = 5;
 
 const ENABLE_BRIEF_ACTIVATE = false;
 const BRIEF_ACTIVATE_MS = 900;
@@ -28,65 +35,50 @@ function fetchWithTimeout(url, options = {}, ms = 12000) {
 }
 
 function langBase(lang = "") {
-    const s = String(lang || "").trim();
-    if (!s) return "en";
-    return s.toLowerCase().split(/[-_]/)[0] || "en";
+    const s = String(lang || "").toLowerCase();
+    return s.split(/[-_]/)[0] || "en";
 }
 
-function normalizeLangTag(lang) {
-    const s = String(lang || "").trim();
-    if (!s) return "en-US";
-    if (/^zh[-_](cn|tw|hk)$/i.test(s)) {
-        const [a, b] = s.split(/[-_]/);
-        return `${a.toLowerCase()}-${b.toUpperCase()}`;
-    }
-    if (/^[a-z]{2}$/i.test(s)) {
-        const b = s.toLowerCase();
-        if (b === "en") return "en-US";
-        if (b === "ja") return "ja-JP";
-        if (b === "zh") return "zh-CN";
-        if (b === "ko") return "ko-KR";
-        return b;
-    }
-    const parts = s.split(/[-_]/);
-    if (parts.length === 1) return parts[0].toLowerCase();
-    return parts
-        .map((p, i) => {
-            if (i === 0) return p.toLowerCase();
-            if (p.length === 2) return p.toUpperCase();
-            if (p.length === 4) return p[0].toUpperCase() + p.slice(1).toLowerCase();
-            return p;
-        })
-        .join("-");
-}
-
-// ----- fallback strings (still used if your /ui-init does not provide these keys) -----
-function uiStringsFallback(userLang = "en-US") {
+function uiStrings(userLang = "en-US") {
     const b = langBase(userLang);
-    if (b === "ja")
-        return {
-            found: "以下が見つかりました。",
-            notFound: "すみません、JD内で見つかりませんでした。キーワードや条件を少し変えてみてください。",
-            blocked: "JD側で検証が出た可能性があります。JDのページで一度検証してからもう一度試してください。",
-            timeout: "処理がタイムアウトしました。JD側が重い/検証が出ている可能性があります。",
-            redirected: "JDの検索ページに到達できませんでした（リダイレクト）。JDで一度検索できる状態か確認してください。",
-            refine: "価格帯・ブランド・用途を言ってくれればさらに絞れます。",
-            openSearch: "JDで検索を開く",
-            queryLabel: "検索ワード",
-            err: "通信に失敗しました（サーバー/ネットワーク）。",
-        };
-    if (b === "zh")
-        return {
-            found: "找到了以下商品。",
-            notFound: "这次在京东没找到，请补充更多关键词或条件。",
-            blocked: "京东可能触发了验证，请先在京东页面完成验证后再试一次。",
-            timeout: "处理超时了，京东页面可能很重或出现验证。",
-            redirected: "无法进入京东搜索页（发生跳转）。请确认你在浏览器里能正常搜索京东。",
-            refine: "告诉我预算/品牌/用途，我可以再筛选。",
-            openSearch: "打开京东搜索",
-            queryLabel: "搜索词",
-            err: "网络/服务端请求失败。",
-        };
+    if (b === "ja") return {
+        found: "以下が見つかりました。",
+        notFound: "すみません、JD内で見つかりませんでした。キーワードや条件を少し変えてみてください。",
+        blocked: "JD側で検証が出た可能性があります。JDのページで一度検証してからもう一度試してください。",
+        timeout: "処理がタイムアウトしました。JD側が重い/検証が出ている可能性があります。",
+        redirected: "JDの検索ページに到達できませんでした（リダイレクト）。JDで一度検索できる状態か確認してください。",
+        refine: "価格帯・ブランド・用途を言ってくれればさらに絞れます。",
+        openSearch: "JDで検索を開く",
+        queryLabel: "検索ワード",
+        usedQueries: "使用した検索語",
+        err: "通信に失敗しました（サーバー/ネットワーク）。",
+        ordersDone: "注文履歴の取り込みが完了しました。",
+        ordersNeedLogin: "JDのログインが必要です。ブラウザでJDにログインした状態で再度試してください。",
+        reasonPrefix: "理由",
+        reasonNoProfile: "プロフィールが未作成のため、関連度で選びました。",
+        reasonNoMatch: "過去傾向との一致が少ないため、関連度・人気を優先しました。",
+        reasonExplore: "探索枠：人気/定番キーワードから選びました。",
+        reasonMatch: "過去の傾向と一致",
+    };
+    if (b === "zh") return {
+        found: "找到了以下商品。",
+        notFound: "这次在京东没找到，请补充更多关键词或条件。",
+        blocked: "京东可能触发了验证，请先在京东页面完成验证后再试一次。",
+        timeout: "处理超时了，京东页面可能很重或出现验证。",
+        redirected: "无法进入京东搜索页（发生跳转）。请确认你在浏览器里能正常搜索京东。",
+        refine: "告诉我预算/品牌/用途，我可以再筛选。",
+        openSearch: "打开京东搜索",
+        queryLabel: "搜索词",
+        usedQueries: "实际使用的搜索词",
+        err: "网络/服务端请求失败。",
+        ordersDone: "订单历史导入完成。",
+        ordersNeedLogin: "需要登录京东。请在浏览器登录后再试一次。",
+        reasonPrefix: "推荐理由",
+        reasonNoProfile: "个人画像尚未建立，先按相关度推荐。",
+        reasonNoMatch: "与个人画像匹配较少，优先按相关度/热门度推荐。",
+        reasonExplore: "探索：根据热门/经典关键词挑选。",
+        reasonMatch: "符合你常买的偏好",
+    };
     return {
         found: "Here are the products I found.",
         notFound: "I couldn’t find it on JD this time. Please add more keywords or constraints.",
@@ -96,85 +88,33 @@ function uiStringsFallback(userLang = "en-US") {
         refine: "Tell me budget/brand/use case to refine.",
         openSearch: "Open JD search",
         queryLabel: "Query",
+        usedQueries: "Queries used",
         err: "Network/server request failed.",
+        ordersDone: "Order history import completed.",
+        ordersNeedLogin: "JD login required. Please log in to JD in your browser and try again.",
+        reasonPrefix: "Reason",
+        reasonNoProfile: "No profile yet; ranked by relevance.",
+        reasonNoMatch: "Low match to your profile; prioritized relevance/popularity.",
+        reasonExplore: "Explore pick: chosen from popular/general keywords.",
+        reasonMatch: "Matches your past preferences",
     };
-}
-
-// OPTIONAL: if /ui-init returns extra keys (found/refine/...), we use them.
-const uiTextCache = new Map(); // lang -> pack
-async function getUiTextPack(lang) {
-    const L = normalizeLangTag(lang);
-    if (uiTextCache.has(L)) return uiTextCache.get(L);
-
-    const fallback = uiStringsFallback(L);
-    let remote = null;
-    try {
-        const r = await fetchWithTimeout(
-            `${API_BASE}/ui-init`,
-            { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lang: L }) },
-            UIINIT_TIMEOUT_MS
-        );
-        remote = await r.json().catch(() => null);
-    } catch (_) {
-        remote = null;
-    }
-
-    // remote may or may not include these keys; merge safely
-    const pack = {
-        // existing fields that sidepanel uses (keep them too)
-        lang: normalizeLangTag(remote?.lang || L),
-        welcome: remote?.welcome || "",
-        placeholder: remote?.placeholder || "",
-        open_button: remote?.open_button || "Open",
-        no_image: remote?.no_image || "No image",
-        searching: remote?.searching || "🔎 Searching…",
-
-        // text fields used in background
-        found: remote?.found || fallback.found,
-        notFound: remote?.notFound || fallback.notFound,
-        blocked: remote?.blocked || fallback.blocked,
-        timeout: remote?.timeout || fallback.timeout,
-        redirected: remote?.redirected || fallback.redirected,
-        refine: remote?.refine || fallback.refine,
-        openSearch: remote?.openSearch || fallback.openSearch,
-        queryLabel: remote?.queryLabel || fallback.queryLabel,
-        err: remote?.err || fallback.err,
-    };
-
-    uiTextCache.set(pack.lang, pack);
-    return pack;
-}
-
-// Local language detection (ANY language) using chrome.i18n.detectLanguage
-function detectLangByChrome(text) {
-    return new Promise((resolve) => {
-        try {
-            if (!chrome?.i18n?.detectLanguage) return resolve(null);
-            chrome.i18n.detectLanguage(String(text || ""), (res) => {
-                const err = chrome.runtime?.lastError;
-                if (err || !res) return resolve(null);
-
-                const langs = Array.isArray(res.languages) ? res.languages : [];
-                langs.sort((a, b) => (b.percentage || 0) - (a.percentage || 0));
-                const best = langs.find((x) => x?.language && x.language !== "und" && (x.percentage || 0) >= 20);
-                if (!best?.language) return resolve(null);
-                resolve(normalizeLangTag(best.language));
-            });
-        } catch (_) {
-            resolve(null);
-        }
-    });
 }
 
 function buildJdSearchUrl(q) {
     return `https://search.jd.com/Search?keyword=${encodeURIComponent(q)}&enc=utf-8`;
 }
-
 function buildJdSearchUrlWithJob(q, jobId) {
     const u = new URL("https://search.jd.com/Search");
     u.searchParams.set("keyword", q);
     u.searchParams.set("enc", "utf-8");
     u.searchParams.set("aicJob", jobId);
+    return u.toString();
+}
+function buildOrdersUrlWithJob(jobId, { maxPages = 10, maxItems = 400 } = {}) {
+    const u = new URL("https://order.jd.com/center/list.action");
+    u.searchParams.set("aicJob", jobId);
+    u.searchParams.set("aicMaxPages", String(maxPages));
+    u.searchParams.set("aicMaxItems", String(maxItems));
     return u.toString();
 }
 
@@ -184,7 +124,6 @@ function extractUserQueryText(fullText) {
     const parts = s.split(/\n\s*\[PageContext\]/i);
     return (parts[0] || "").trim();
 }
-
 function normalizeDisplayQuery(s) {
     return String(s || "")
         .replace(/[、，,。．・/／|｜]+/g, " ")
@@ -212,69 +151,83 @@ function pTabsQueryActive() {
         });
     });
 }
+function storageGet(key) {
+    return new Promise((resolve) => chrome.storage.local.get([key], (r) => resolve(r?.[key])));
+}
+function storageSet(obj) {
+    return new Promise((resolve) => chrome.storage.local.set(obj, () => resolve(true)));
+}
+
+// keep existing keys so you don't lose current data
+const ORDERS_KEY = "aic_orders_v1";
+const PROFILE_KEY = "aic_profile_v1";
 
 // ---------------------------
-// Ensure jd_scraper.js is registered (safety net)
+// Ensure content scripts are registered
 // ---------------------------
-async function ensureContentScriptRegistered() {
+async function ensureContentScriptsRegistered() {
     try {
         const regs = await chrome.scripting.getRegisteredContentScripts();
-        const has = regs.some((r) => r.id === "aic_jd_scraper");
-        if (has) return;
+        const hasSearch = regs.some(r => r.id === "aic_jd_scraper");
+        const hasOrders = regs.some(r => r.id === "aic_jd_orders_scraper");
 
-        await chrome.scripting.registerContentScripts([
-            {
+        const toRegister = [];
+
+        if (!hasSearch) {
+            toRegister.push({
                 id: "aic_jd_scraper",
                 matches: ["https://search.jd.com/*"],
                 js: ["jd_scraper.js"],
                 runAt: "document_start",
                 allFrames: true,
-            },
-        ]);
+            });
+        }
+        if (!hasOrders) {
+            toRegister.push({
+                id: "aic_jd_orders_scraper",
+                matches: ["https://order.jd.com/*"],
+                js: ["jd_orders_scraper.js"],
+                runAt: "document_start",
+                allFrames: true,
+            });
+        }
 
-        console.log("[AIC] registered content script: aic_jd_scraper");
+        if (toRegister.length) {
+            await chrome.scripting.registerContentScripts(toRegister);
+            console.log("[AIC] registered content scripts:", toRegister.map(x => x.id));
+        }
     } catch (e) {
-        console.warn("[AIC] ensureContentScriptRegistered failed:", e);
+        console.warn("[AIC] ensureContentScriptsRegistered failed:", e);
     }
 }
 
 chrome.runtime.onInstalled.addListener(() => {
-    if (chrome.sidePanel?.setPanelBehavior) {
-        chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
-    }
-    ensureContentScriptRegistered();
+    if (chrome.sidePanel?.setPanelBehavior) chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+    ensureContentScriptsRegistered();
 });
-ensureContentScriptRegistered();
+ensureContentScriptsRegistered();
 
 // ---------------------------
-// Pending scrape jobs
+// Pending jobs
 // ---------------------------
-const pendingScrapes = new Map(); // jobId -> { tabId, resolve, timer, onUpdated }
+const pendingScrapes = new Map();
+const pendingOrders = new Map();
 
-function finishScrape(jobId, payload) {
-    const p = pendingScrapes.get(jobId);
+function finishJob(map, jobId, payload) {
+    const p = map.get(jobId);
     if (!p) return;
+    map.delete(jobId);
 
-    pendingScrapes.delete(jobId);
-
-    try {
-        clearTimeout(p.timer);
-    } catch (_) { }
-    try {
-        chrome.tabs.onUpdated.removeListener(p.onUpdated);
-    } catch (_) { }
+    try { clearTimeout(p.timer); } catch (_) { }
+    try { chrome.tabs.onUpdated.removeListener(p.onUpdated); } catch (_) { }
 
     if (p.tabId != null) {
-        try {
-            chrome.tabs.remove(p.tabId);
-        } catch (_) { }
+        try { chrome.tabs.remove(p.tabId); } catch (_) { }
     }
-
-    try {
-        p.resolve(payload);
-    } catch (_) { }
+    try { p.resolve(payload); } catch (_) { }
 }
 
+<<<<<<< Updated upstream
 // NOTE: This listener serves TWO purposes:
 //  1) Receive JD_SCRAPE_RESULT from jd_scraper.js (content script)
 //  2) Serve sidepanel RPC via sendMessage (MV3-friendly; SW can sleep/wake)
@@ -311,6 +264,21 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
     // keep the message channel open for async sendResponse
     return true;
+=======
+chrome.runtime.onMessage.addListener((msg) => {
+    if (msg?.type === "JD_SCRAPE_RESULT") {
+        const jobId = String(msg.jobId || "");
+        if (!jobId) return;
+        finishJob(pendingScrapes, jobId, msg.payload || {});
+        return;
+    }
+    if (msg?.type === "JD_ORDERS_RESULT") {
+        const jobId = String(msg.jobId || "");
+        if (!jobId) return;
+        finishJob(pendingOrders, jobId, msg.payload || {});
+        return;
+    }
+>>>>>>> Stashed changes
 });
 
 // ---------------------------
@@ -339,12 +307,11 @@ async function fetchJdPrices(skus = []) {
             }
         }
     } catch (_) { }
-
     return map;
 }
 
 // ---------------------------
-// Scrape JD by background tab + content script
+// Scrape JD by background tab
 // ---------------------------
 async function scrapeJdByTab(zhQuery, timeoutMs = SCRAPE_TIMEOUT_MS) {
     const jobId = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
@@ -354,31 +321,21 @@ async function scrapeJdByTab(zhQuery, timeoutMs = SCRAPE_TIMEOUT_MS) {
     const prevActiveId = prevTabs?.[0]?.id ?? null;
 
     const tab = await pTabsCreate({ url, active: false });
-    console.log("[AIC] created search tab", { tabId: tab.id, jobId, url });
 
     const onUpdated = (tabId, changeInfo) => {
         if (tabId !== tab.id) return;
         if (changeInfo?.url) {
             const u = String(changeInfo.url);
             if (u.startsWith("https://www.jd.com") || u.startsWith("http://www.jd.com")) {
-                console.log("[AIC] redirected away from search.jd.com", { jobId, url: u });
-                finishScrape(jobId, { ok: false, redirected: true, url: u });
+                finishJob(pendingScrapes, jobId, { ok: false, redirected: true, url: u });
             }
         }
     };
     chrome.tabs.onUpdated.addListener(onUpdated);
 
     const payload = await new Promise((resolve) => {
-        const timer = setTimeout(() => {
-            finishScrape(jobId, { ok: false, timeout: true });
-        }, timeoutMs);
-
-        pendingScrapes.set(jobId, {
-            tabId: tab.id,
-            resolve,
-            timer,
-            onUpdated,
-        });
+        const timer = setTimeout(() => finishJob(pendingScrapes, jobId, { ok: false, timeout: true }), timeoutMs);
+        pendingScrapes.set(jobId, { tabId: tab.id, resolve, timer, onUpdated });
     });
 
     if (ENABLE_BRIEF_ACTIVATE && prevActiveId != null) {
@@ -389,63 +346,152 @@ async function scrapeJdByTab(zhQuery, timeoutMs = SCRAPE_TIMEOUT_MS) {
         } catch (_) { }
     }
 
-    if (payload?.ok && Array.isArray(payload.items) && payload.items.length > 0) {
-        const need = payload.items.filter((it) => !it.price).map((it) => it.sku).filter(Boolean);
-        if (need.length) {
-            const priceMap = await fetchJdPrices(need);
-            payload.items = payload.items.map((it) => {
-                const p = it.price || priceMap.get(it.sku) || "";
-                const price = p ? (String(p).includes("￥") ? String(p) : `￥${p}`) : "";
-                return { ...it, price };
-            });
+    return payload;
+}
+
+async function scrapeOrdersByTab({ maxPages = 10, maxItems = 400, active = false } = {}) {
+    const jobId = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+    const url = buildOrdersUrlWithJob(jobId, { maxPages, maxItems });
+
+    const tab = await pTabsCreate({ url, active: !!active });
+
+    const onUpdated = (tabId, changeInfo) => {
+        if (tabId !== tab.id) return;
+        if (changeInfo?.url) {
+            const u = String(changeInfo.url);
+            if (!u.includes("order.jd.com")) {
+                finishJob(pendingOrders, jobId, { ok: false, redirected: true, url: u, needLogin: true });
+            }
         }
-    }
+    };
+    chrome.tabs.onUpdated.addListener(onUpdated);
+
+    const payload = await new Promise((resolve) => {
+        const timer = setTimeout(() => finishJob(pendingOrders, jobId, { ok: false, timeout: true }), ORDERS_TIMEOUT_MS);
+        pendingOrders.set(jobId, { tabId: tab.id, resolve, timer, onUpdated });
+    });
 
     return payload;
 }
 
 // ---------------------------
-// UI init + Lang detect handlers (server)
+// translate (optional, best-effort)
 // ---------------------------
-async function handleUiInit(payload = {}) {
-    const lang = normalizeLangTag(payload.lang || "en-US");
-    try {
-        const r = await fetchWithTimeout(
-            `${API_BASE}/ui-init`,
-            { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lang }) },
-            UIINIT_TIMEOUT_MS
-        );
-        const data = await r.json().catch(() => null);
-        return { ok: true, data: data || { ok: false } };
-    } catch (e) {
-        return { ok: true, data: { ok: false, error: String(e?.name || e) } };
-    }
-}
+async function translateTexts(texts = [], targetLang = "en-US") {
+    const arr = (texts || []).map(x => String(x || "")).filter(Boolean);
+    if (!arr.length) return null;
 
-async function handleLangDetect(payload = {}) {
-    const text = String(payload.text || "");
-    const defaultLang = normalizeLangTag(payload.defaultLang || "en-US");
     try {
         const r = await fetchWithTimeout(
-            `${API_BASE}/lang-detect`,
-            { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, defaultLang }) },
-            LANGDETECT_TIMEOUT_MS
+            `${API_BASE}/translate`,
+            { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ targetLang, texts: arr }) },
+            TRANSLATE_TIMEOUT_MS
         );
         const data = await r.json().catch(() => null);
-        return { ok: true, data: data || { ok: false, lang: defaultLang } };
-    } catch (e) {
-        return { ok: true, data: { ok: true, lang: defaultLang, error: String(e?.name || e) } };
-    }
+        if (data?.ok && Array.isArray(data.translations) && data.translations.length === arr.length) {
+            return data.translations.map(x => String(x || ""));
+        }
+    } catch (_) { }
+    return null;
 }
 
 // ---------------------------
-// pick candidates
+// Simple genre classifier for result filtering
+// ---------------------------
+function classifyGenreFromTitle(title) {
+    const s = String(title || "").toLowerCase();
+    if (/(thinkpad|macbook|laptop|notebook|ultra|intel|amd|ryzen|i7|i5|i9|ram|ssd|rtx|gtx|gen\d|gb|tb)/i.test(s)) return "electronics";
+    if (/[手机电脑笔记本平板耳机键盘鼠标路由器硬盘内存显示器相机音箱]/.test(s)) return "electronics";
+    if (/[汉堡薯条鸡肉牛肉火锅烧烤零食方便面拉面]/.test(s) || /(burger|ramen|noodle|snack)/i.test(s)) return "food";
+    if (/[可乐汽水牛奶酸奶咖啡茶果汁]/.test(s) || /(cola|soda|milk|yogurt|coffee|tea|juice)/i.test(s)) return "drink";
+    return "other";
+}
+
+// ---------------------------
+// Intent anchors (fix drift)
+// ---------------------------
+function detectIntentAnchor(userQuery) {
+    const s = String(userQuery || "").toLowerCase();
+
+    // electronics / PC
+    if (/(pc|パソコン|ノートpc|ノートパソコン|laptop|notebook|computer|电脑|笔记本)/i.test(s)) {
+        return { genre: "electronics", confidence: 0.98, zhAnchor: "笔记本电脑", display: "PC" };
+    }
+    // phone
+    if (/(iphone|android|smartphone|手机|スマホ)/i.test(s)) {
+        return { genre: "electronics", confidence: 0.9, zhAnchor: "手机", display: "スマホ" };
+    }
+    // food
+    if (/(ご飯|ごはん|食べ|美味|ラーメン|ハンバーガー|饭|吃|好吃|汉堡|拉面|方便面)/i.test(s)) {
+        return { genre: "food", confidence: 0.85, zhAnchor: "美食", display: "ご飯" };
+    }
+    return { genre: "other", confidence: 0.3, zhAnchor: "", display: "" };
+}
+
+// ---------------------------
+// display keywordify (fix "あり おすすめ")
+// ---------------------------
+function keywordifyDisplay(userQuery, replyLang) {
+    const b = langBase(replyLang);
+    const s0 = String(userQuery || "").trim().replace(/[。．\.!！\?？]/g, "").trim();
+    if (!s0) return s0;
+
+    const intent = detectIntentAnchor(s0);
+    if (intent.confidence >= 0.9 && intent.display) {
+        // PC / smartphone etc
+        if (b === "ja") return `${intent.display} おすすめ`;
+        if (b === "zh") return `${intent.zhAnchor || intent.display} 推荐`;
+        return `${intent.display} recommendation`;
+    }
+
+    if (b === "ja") {
+        // remove polite/filler and verb tails
+        let x = s0
+            .replace(/(おすすめ|お勧め)(の)?/g, " ")
+            .replace(/(ありますか|ある|ください|教えて|欲しい|探して|探したい|です|ます|したい|お願い)/g, " ")
+            .replace(/(ちなみに|とりあえず|ざっと|適当に|何か|なにか)/g, " ")
+            .replace(/[がをにへでとはのからまでより]/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+
+        // drop leftover "あり"
+        x = x.replace(/\bあり\b/g, "").trim();
+
+        // pick noun-ish chunk
+        const chunks = x.match(/[一-龥ぁ-んァ-ヶー]{2,}/g) || [];
+        const head = chunks[0] || x || s0;
+
+        return `${head} おすすめ`.trim();
+    }
+
+    if (b === "zh") {
+        let x = s0
+            .replace(/(推荐|有什么|想吃|想买|给我|请|帮我|一下|吧|呢|吗|嘛)/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+        const m = x.match(/[\u4E00-\u9FFF]{2,}/);
+        const head = m ? m[0] : x || s0;
+        return `${head} 推荐`.trim();
+    }
+
+    // english fallback
+    let x = s0.toLowerCase()
+        .replace(/(recommend|recommendation|suggest|something|any|please|want|i want|i'd like|show me)/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    const w = (x.match(/[a-z]{3,}/) || [])[0];
+    const head = w || x || s0;
+    return `${head} recommendation`.trim();
+}
+
+// ---------------------------
+// server candidates
 // ---------------------------
 function pickZhCandidates(serverData) {
     const list = Array.isArray(serverData?.queries) ? serverData.queries : [];
     const zh = list
-        .filter((it) => String(it?.lang || "").toLowerCase().startsWith("zh"))
-        .map((it) => String(it?.q || "").trim())
+        .filter(it => String(it?.lang || "").toLowerCase().startsWith("zh"))
+        .map(it => String(it?.q || "").trim())
         .filter(Boolean);
 
     const keywordZh = String(serverData?.keyword_zh || "").trim();
@@ -468,230 +514,347 @@ function pickDisplayQuery(serverData, fallbackUserQuery) {
 }
 
 // ---------------------------
+// build 5 zh queries (enforce anchors if intent confident)
+// ---------------------------
+function buildFiveZhQueries({ serverZhList, baseZh, profile, userQuery, replyLang }) {
+    const intent = detectIntentAnchor(userQuery);
+    const profOK = !!(profile?.top?.length);
+    const vague = /おすすめ|推荐|recommend/i.test(String(userQuery || ""));
+
+    const out = [];
+    const seen = new Set();
+    const add = (q) => {
+        const s = String(q || "").replace(/\s+/g, " ").trim();
+        if (!s || seen.has(s)) return;
+        seen.add(s);
+        out.push(s);
+    };
+
+    // If intent is confidently electronics, anchor all queries with 笔记本电脑
+    const anchor = intent.confidence >= 0.9 ? intent.zhAnchor : "";
+
+    // filter server candidates by anchor when strong intent
+    const serverFiltered = (serverZhList || []).filter(q => {
+        if (!anchor) return true;
+        return String(q).includes(anchor) || /笔记本|电脑/.test(String(q));
+    });
+
+    for (const q of serverFiltered.slice(0, 2)) add(q);
+
+    const base = String(baseZh || "").trim() || (anchor ? anchor : "推荐");
+
+    if (intent.confidence >= 0.9 && anchor) {
+        // keep within genre strictly
+        add(`${anchor} 推荐`);
+        add(`${anchor} 性价比`);
+        add(`${anchor} 轻薄`);
+        add(`${anchor} 办公`);
+        add(`${anchor} 学生`);
+        return out.slice(0, QUERY_COUNT);
+    }
+
+    // otherwise: previous strategy (vague uses profile top token)
+    if (vague && profOK) {
+        // pick profile-biased token but do not override obvious category words
+        add(`${base} 推荐`);
+        add(`${base} 热销`);
+        add(`${base} 性价比`);
+
+        // small preference boost if available
+        const tok = (profile.top || [])
+            .map(x => String(x?.t || ""))
+            .find(t => /[\u4E00-\u9FFF]/.test(t) && t.length >= 2 && t.length <= 6);
+        if (tok) add(`${base} ${tok}`);
+        add(`${base}`);
+    } else {
+        add(base);
+        add(`${base} 性价比`);
+        add(`${base} 热销`);
+        add(`${base} 推荐`);
+
+        if (profOK) {
+            const tok = (profile.top || [])
+                .map(x => String(x?.t || ""))
+                .find(t => /[\u4E00-\u9FFF]/.test(t) && t.length >= 2 && t.length <= 6);
+            if (tok) add(`${base} ${tok}`);
+        }
+    }
+
+    // ensure size
+    return out.slice(0, QUERY_COUNT);
+}
+
+// ---------------------------
+// Pooling / ranking / reasons
+// ---------------------------
+function dedupeByKey(items) {
+    const out = [];
+    const seen = new Set();
+    for (const it of items || []) {
+        const key =
+            (it?.sku ? `sku:${it.sku}` : "") ||
+            (it?.url ? `url:${it.url}` : "") ||
+            (it?.title ? `t:${it.title}` : "");
+        if (!key) continue;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(it);
+    }
+    return out;
+}
+
+function normalizeForMatch(s) {
+    return String(s || "")
+        .toLowerCase()
+        .replace(/\s+/g, "")
+        .replace(/[（）()【】\[\]{}<>《》"“”'‘’·•.,，。:：;；!?！？\-_/\\|｜]+/g, "");
+}
+
+function scoreWithProfile(title, profile) {
+    if (!profile?.top?.length) return { score: 0, matches: [] };
+    const tNorm = normalizeForMatch(title);
+    if (!tNorm) return { score: 0, matches: [] };
+
+    let score = 0;
+    const matches = [];
+
+    for (const { t, c } of profile.top) {
+        const tok = String(t || "").trim();
+        if (!tok) continue;
+        const tokNorm = normalizeForMatch(tok);
+        if (!tokNorm) continue;
+
+        if (tNorm.includes(tokNorm)) {
+            matches.push(tok);
+            score += (c || 1);
+            if (matches.length >= 3) break;
+        }
+    }
+    return { score, matches };
+}
+
+function reasonText(ui, profile, matches, isExplore) {
+    const hasProfile = !!(profile?.top?.length);
+    if (matches && matches.length) {
+        const joined = matches.join(langBase(ui?.reasonPrefix) === "zh" ? "、" : ", ");
+        return `${ui.reasonPrefix}: ${ui.reasonMatch}（${joined}）`;
+    }
+    if (!hasProfile) return `${ui.reasonPrefix}: ${ui.reasonNoProfile}`;
+    return `${ui.reasonPrefix}: ${isExplore ? ui.reasonExplore : ui.reasonNoMatch}`;
+}
+
+async function rankAndExplain(poolItems, profile, replyLang) {
+    const ui = uiStrings(replyLang);
+
+    const scored = (poolItems || []).map((x, idx) => {
+        const { score, matches } = scoreWithProfile(x?.title, profile);
+        return { x, idx, score, matches };
+    });
+
+    scored.sort((a, b) => (b.score - a.score) || (a.idx - b.idx));
+
+    // diversity: best per query first
+    const bestByQuery = new Map();
+    for (const row of scored) {
+        const q = String(row?.x?._fromQuery || "");
+        if (!q) continue;
+        if (!bestByQuery.has(q)) bestByQuery.set(q, row);
+        if (bestByQuery.size >= QUERY_COUNT) break;
+    }
+
+    const final = [];
+    const seen = new Set();
+
+    function keyOf(it) {
+        return (it?.sku ? `sku:${it.sku}` : "") || (it?.url ? `url:${it.url}` : "") || (it?.title ? `t:${it.title}` : "");
+    }
+
+    for (const row of bestByQuery.values()) {
+        const it = row.x;
+        const k = keyOf(it);
+        if (!k || seen.has(k)) continue;
+
+        const fromQ = String(it?._fromQuery || "");
+        const isExplore = /性价比|热销|评价好/.test(fromQ) && !(row?.matches?.length);
+
+        final.push({
+            title: it.title,
+            description: reasonText(ui, profile, row.matches, isExplore),
+            price: it.price,
+            image: it.image,
+            url: it.url,
+            source: "JD",
+        });
+        seen.add(k);
+        if (final.length >= FINAL_TAKE) break;
+    }
+
+    for (const row of scored) {
+        if (final.length >= FINAL_TAKE) break;
+        const it = row.x;
+        const k = keyOf(it);
+        if (!k || seen.has(k)) continue;
+
+        const fromQ = String(it?._fromQuery || "");
+        const isExplore = /性价比|热销|评价好/.test(fromQ) && !(row?.matches?.length);
+
+        final.push({
+            title: it.title,
+            description: reasonText(ui, profile, row.matches, isExplore),
+            price: it.price,
+            image: it.image,
+            url: it.url,
+            source: "JD",
+        });
+        seen.add(k);
+    }
+
+    return final;
+}
+
+// ---------------------------
+// UI init + Lang detect handlers
+// ---------------------------
+async function handleUiInit(payload = {}) {
+    const lang = payload.lang || "en-US";
+    try {
+        const r = await fetchWithTimeout(
+            `${API_BASE}/ui-init`,
+            { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lang }) },
+            UIINIT_TIMEOUT_MS
+        );
+        const data = await r.json().catch(() => null);
+        return { ok: true, data: data || { ok: false } };
+    } catch (e) {
+        return { ok: true, data: { ok: false, error: String(e?.name || e) } };
+    }
+}
+async function handleLangDetect(payload = {}) {
+    const text = String(payload.text || "");
+    const defaultLang = payload.defaultLang || "en-US";
+    try {
+        const r = await fetchWithTimeout(
+            `${API_BASE}/lang-detect`,
+            { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, defaultLang }) },
+            LANGDETECT_TIMEOUT_MS
+        );
+        const data = await r.json().catch(() => null);
+        return { ok: true, data: data || { ok: false, lang: defaultLang } };
+    } catch (e) {
+        return { ok: true, data: { ok: true, lang: defaultLang, error: String(e?.name || e) } };
+    }
+}
+
+// ---------------------------
 // Main handler: AI_CHAT
 // ---------------------------
 async function handleAiChat(payload = {}) {
+    const replyLang = payload.lang || "en-US";
+    const ui = uiStrings(replyLang);
     const t0 = Date.now();
 
     const fullText = String(payload.text || "").trim();
     const userQuery = extractUserQueryText(fullText) || fullText;
 
-    // Prefer payload.lang from sidepanel, but guard against wrong fallback ("en-US")
-    let replyLang = normalizeLangTag(payload.lang || "en-US");
-    const chromeDetected = await detectLangByChrome(userQuery);
-    if (chromeDetected && langBase(chromeDetected) !== langBase(replyLang)) {
-        // if sidepanel was wrong, fix here
-        replyLang = chromeDetected;
-    }
+    const profile = (await storageGet(PROFILE_KEY)) || { top: [] };
 
-    const ui = await getUiTextPack(replyLang);
-
-    console.log("[AIC] AI_CHAT start", { userQuery, replyLang });
-
-    // 1) server generates queries + display_query
+    // server base planner
     let serverData = null;
     try {
         const r = await fetchWithTimeout(
             `${API_BASE}/chatbot`,
-            {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ ...(payload || {}), lang: replyLang, clientScrape: true }),
-            },
+            { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...(payload || {}), clientScrape: true }) },
             CHATBOT_TIMEOUT_MS
         );
         serverData = await r.json().catch(() => null);
-    } catch (e) {
-        console.log("[AIC] /chatbot failed (ok)", String(e?.name || e));
+    } catch (_) {
         serverData = null;
     }
 
-    const displayQuery = pickDisplayQuery(serverData, userQuery);
-    const zhCandidates = pickZhCandidates(serverData);
+    const serverZh = pickZhCandidates(serverData);
+    const baseZh = serverZh[0] || String(serverData?.keyword_zh || "").trim() || userQuery;
 
-    console.log("[AIC] displayQuery", displayQuery);
-    console.log("[AIC] zhCandidates", zhCandidates);
+    // Display label (fixed)
+    const displayRaw = pickDisplayQuery(serverData, userQuery);
+    const displayLabel = keywordifyDisplay(displayRaw, replyLang);
 
-    // 2) scraping
-    for (const zhQ of zhCandidates.slice(0, MAX_QUERY_TRIES)) {
+    // 5 queries
+    const zhQueries = buildFiveZhQueries({
+        serverZhList: serverZh,
+        baseZh,
+        profile,
+        userQuery,
+        replyLang,
+    });
+
+    // Translate queries for display (per your requirement)
+    let zhTranslations = null;
+    if (langBase(replyLang) !== "zh") {
+        zhTranslations = await translateTexts(zhQueries, replyLang);
+    }
+
+    const usedQueriesText = (() => {
+        const lines = [];
+        lines.push(`${ui.usedQueries}:`);
+        for (let i = 0; i < zhQueries.length; i++) {
+            const zhQ = zhQueries[i];
+            const tr = zhTranslations?.[i];
+            if (tr && tr.trim() && tr.trim() !== zhQ.trim()) {
+                lines.push(`${i + 1}) ${tr.trim()}  ←  ${zhQ}`);
+            } else {
+                lines.push(`${i + 1}) ${zhQ}`);
+            }
+        }
+        return lines.join("\n");
+    })();
+
+    // scrape pool
+    const pool = [];
+    let anyBlocked = false, anyRedirected = false, anyTimeout = false;
+
+    const intent = detectIntentAnchor(userQuery);
+
+    for (const zhQ of zhQueries) {
         if (Date.now() - t0 > TOTAL_BUDGET_MS) break;
 
-        console.log("[AIC] scrape try", { zhQ });
+        const r = await scrapeJdByTab(zhQ, SCRAPE_TIMEOUT_MS).catch((e) => ({ ok: false, error: String(e?.message || e) }));
 
-        const r = await scrapeJdByTab(zhQ, SCRAPE_TIMEOUT_MS).catch((e) => ({
-            ok: false,
-            error: String(e?.message || e),
-        }));
-
-        console.log("[AIC] scrape done", {
-            zhQ,
-            ok: r?.ok,
-            blocked: r?.blocked,
-            timeout: r?.timeout,
-            redirected: r?.redirected,
-            n: r?.items?.length,
-        });
-
-        const openSearchItem = {
-            title: ui.openSearch,
-            url: buildJdSearchUrl(zhQ),
-            price: "",
-            image: "",
-            source: "JD",
-        };
-
-        if (r?.blocked) {
-            return {
-                ok: true,
-                data: {
-                    ok: true,
-                    reply_lang: replyLang,
-                    messages: [
-                        { role: "assistant", type: "text", content: ui.blocked },
-                        { role: "assistant", type: "text", content: `(${ui.queryLabel}: ${displayQuery})` },
-                        { role: "assistant", type: "products", items: [openSearchItem] },
-                    ],
-                },
-            };
-        }
-
-        if (r?.redirected) {
-            return {
-                ok: true,
-                data: {
-                    ok: true,
-                    reply_lang: replyLang,
-                    messages: [
-                        { role: "assistant", type: "text", content: ui.redirected },
-                        { role: "assistant", type: "text", content: `(${ui.queryLabel}: ${displayQuery})` },
-                        { role: "assistant", type: "products", items: [openSearchItem] },
-                    ],
-                },
-            };
-        }
-
-        if (r?.timeout) {
-            return {
-                ok: true,
-                data: {
-                    ok: true,
-                    reply_lang: replyLang,
-                    messages: [
-                        { role: "assistant", type: "text", content: ui.timeout },
-                        { role: "assistant", type: "text", content: `(${ui.queryLabel}: ${displayQuery})` },
-                        { role: "assistant", type: "products", items: [openSearchItem] },
-                    ],
-                },
-            };
-        }
+        if (r?.blocked) { anyBlocked = true; continue; }
+        if (r?.redirected) { anyRedirected = true; continue; }
+        if (r?.timeout) { anyTimeout = true; continue; }
 
         if (r?.ok && Array.isArray(r.items) && r.items.length > 0) {
-            // 5 items only
-            const items = r.items.slice(0, 5).map((it) => ({
+            const items = r.items.slice(0, PER_QUERY_TAKE).map((it) => ({
                 title: String(it.title || ""),
                 description: "",
                 price: String(it.price || ""),
                 image: String(it.image || ""),
                 url: String(it.url || ""),
+                sku: String(it.sku || ""),
                 source: "JD",
+                _fromQuery: zhQ,
             }));
 
-            return {
-                ok: true,
-                data: {
-                    ok: true,
-                    reply_lang: replyLang,
-                    messages: [
-                        { role: "assistant", type: "text", content: `${ui.found}\n(${ui.queryLabel}: ${displayQuery})` },
-                        { role: "assistant", type: "products", items },
-                        { role: "assistant", type: "text", content: ui.refine },
-                    ],
-                },
-            };
+            // ✅ prevent category drift: if intent is confidently electronics, filter non-electronics items
+            if (intent.confidence >= 0.9 && intent.genre === "electronics") {
+                for (const x of items) {
+                    const g = classifyGenreFromTitle(x.title);
+                    if (g === "electronics" || g === "other") pool.push(x);
+                }
+            } else {
+                pool.push(...items);
+            }
         }
     }
 
-    // Not found
-    const openQ = zhCandidates[0] || userQuery;
-    return {
-        ok: true,
-        data: {
-            ok: true,
-            reply_lang: replyLang,
-            messages: [
-                { role: "assistant", type: "text", content: serverData ? ui.notFound : ui.err },
-                { role: "assistant", type: "text", content: `(${ui.queryLabel}: ${displayQuery})` },
-                { role: "assistant", type: "products", items: [{ title: ui.openSearch, url: buildJdSearchUrl(openQ), price: "", image: "", source: "JD" }] },
-                { role: "assistant", type: "text", content: ui.refine },
-            ],
-        },
-    };
-}
+    if (!pool.length) {
+        const openQ = zhQueries[0] || baseZh || userQuery;
+        const openSearchItem = { title: ui.openSearch, url: buildJdSearchUrl(openQ), price: "", image: "", source: "JD" };
 
-// ---------------------------
-// STT handler (unchanged)
-// ---------------------------
-async function handleStt(payload = {}) {
-    try {
-        const r = await fetchWithTimeout(
-            `${API_BASE}/stt`,
-            { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload || {}) },
-            20000
-        );
-        const data = await r.json().catch(() => null);
-        return { ok: true, data: data || { ok: false, error: "stt_error" } };
-    } catch (e) {
-        return { ok: true, data: { ok: false, error: String(e?.name || e) } };
-    }
-}
+        const commonMsgs = [
+            { role: "assistant", type: "text", content: `(${ui.queryLabel}: ${displayLabel})` },
+            { role: "assistant", type: "text", content: usedQueriesText },
+            { role: "assistant", type: "products", items: [openSearchItem] },
+        ];
 
-// ===== Port messaging =====
-function safePortPost(port, msg) {
-    try {
-        port.postMessage(msg);
-    } catch (e) {
-        console.warn("[AIC] port.postMessage failed", e);
-    }
-}
-
-chrome.runtime.onConnect.addListener((port) => {
-    if (port.name !== "aic") return;
-    console.log("[AIC] port connected");
-
-    port.onMessage.addListener(async (msg) => {
-        const type = msg?.type;
-        const jobId = msg?.jobId;
-        const payload = msg?.payload || {};
-        if (!type || !jobId) return;
-
-        try {
-            if (type === "AIC_UI_INIT") {
-                const out = await handleUiInit(payload);
-                safePortPost(port, { type: "AIC_UI_INIT_RESULT", jobId, out });
-                return;
-            }
-            if (type === "AIC_LANG_DETECT") {
-                const out = await handleLangDetect(payload);
-                safePortPost(port, { type: "AIC_LANG_DETECT_RESULT", jobId, out });
-                return;
-            }
-            if (type === "AI_CHAT") {
-                const out = await handleAiChat(payload);
-                safePortPost(port, { type: "AI_CHAT_RESULT", jobId, out });
-                return;
-            }
-            if (type === "AIC_STT") {
-                const out = await handleStt(payload);
-                safePortPost(port, { type: "AIC_STT_RESULT", jobId, out });
-                return;
-            }
-            safePortPost(port, { type: "AIC_ERROR", jobId, error: "unknown_type" });
-        } catch (e) {
-            safePortPost(port, { type: "AIC_ERROR", jobId, error: String(e?.message || e) });
-        }
-    });
-
-    port.onDisconnect.addListener(() => {
-        console.log("[AIC] port disconnected", chrome.runtime.lastError?.message || "");
-    });
-});
+        if (anyBlocked) return { ok: true, data: { ok: true, reply

@@ -209,13 +209,40 @@
             color: var(--muted);
             font-size: 12px;
         }
+
+        header .actions{
+            display:flex;
+            gap:8px;
+            align-items:center;
+        }
+
+        header button.tool{
+            width:auto;
+            height:28px;
+            padding:0 10px;
+            font-size:12px;
+            border-radius:10px;
+            border:1px solid var(--border);
+            background: rgba(255,255,255,.02);
+        }
+
     </style>
 </head>
 
 <body>
     <div class="wrap">
         <header>
+<<<<<<< Updated upstream
             <div class="title"><span class="badge">AI</span>AI Commerce Agent <span class="hint"></span>
+=======
+            <div class="title">
+                <span class="badge">AI</span>AI Commerce Agent
+            </div>
+        
+            <div class="actions">
+                <button id="btnSync" class="tool" title="注文履歴を同期">⟳ Sync</button>
+                <button id="btnProfile" class="tool" title="プロフィール表示">👤 Profile</button>
+>>>>>>> Stashed changes
             </div>
         </header>
 

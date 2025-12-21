@@ -3,16 +3,12 @@
   "name": "AI Commerce Agent",
   "version": "1.1.0",
   "description": "AI-Powered JD product search with voice input",
-  "permissions": [
-    "sidePanel",
-    "tabs",
-    "scripting"
-  ],
+  "permissions": ["tabs", "scripting", "storage", "sidePanel"],
   "host_permissions": [
-    "https://ergonomics-mu.vercel.app/*",
     "https://search.jd.com/*",
-    "https://item.jd.com/*",
-    "https://p.3.cn/*"
+    "https://order.jd.com/*",
+    "https://p.3.cn/*",
+    "https://ergonomics-mu.vercel.app/*"
   ],
   "background": {
     "service_worker": "background.js"
