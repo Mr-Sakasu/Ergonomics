@@ -10,6 +10,7 @@ console.log("[AIC] sidepanel.js loaded");
 let el = null;
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 function addBubble(text, who = "bot") {
     if (!el?.msgs) return null;
     const div = document.createElement("div");
@@ -32,6 +33,8 @@ function addBubble(text, who = "bot") {
 
 function requestBG(type, payload, timeoutMs = 120000) {
 =======
+=======
+>>>>>>> Stashed changes
 // =========================
 // Port (auto reconnect + keepalive)
 // =========================
@@ -100,6 +103,7 @@ function requestPort(type, payload, timeoutMs = 120000) {
 
     const jobId = `${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
+<<<<<<< Updated upstream
 >>>>>>> Stashed changes
     return new Promise((resolve, reject) => {
         let done = false;
@@ -112,11 +116,20 @@ function requestPort(type, payload, timeoutMs = 120000) {
 
 <<<<<<< Updated upstream
 =======
+=======
+    return new Promise((resolve, reject) => {
+        const t = setTimeout(() => {
+            pending.delete(jobId);
+            reject(new Error("timeout"));
+        }, timeoutMs);
+
+>>>>>>> Stashed changes
         pending.set(jobId, {
             resolve: (v) => { clearTimeout(t); resolve(v); },
             reject: (e) => { clearTimeout(t); reject(e); },
         });
 
+<<<<<<< Updated upstream
 >>>>>>> Stashed changes
         try {
             chrome.runtime.sendMessage({ type, payload }, (resp) => {
@@ -132,6 +145,13 @@ function requestPort(type, payload, timeoutMs = 120000) {
             if (done) return;
             done = true;
             clearTimeout(timer);
+=======
+        try {
+            port.postMessage({ type, jobId, payload });
+        } catch (e) {
+            clearTimeout(t);
+            pending.delete(jobId);
+>>>>>>> Stashed changes
             reject(e);
         }
     });
@@ -340,9 +360,12 @@ async function ensureUiPack(lang, { showWelcome = false, setPlaceholder = true }
     } catch (_) { }
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
     // fetch via background -> /api/ui-init
     const out = await requestBG("AIC_UI_INIT", { lang: norm }, 120000);
 =======
+=======
+>>>>>>> Stashed changes
     const out = await requestPort("AIC_UI_INIT", { lang: norm }, 120000);
 >>>>>>> Stashed changes
     const data = out?.data;
@@ -863,11 +886,15 @@ async function sendChat(text) {
 
     try {
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
         const out = await requestBG("AI_CHAT", {
             text: q,
             lang: detectedLang, // reply language follows user input language
             provider: "jd",
         });
+=======
+        const out = await requestPort("AI_CHAT", { text: q, lang: detectedLang, provider: "jd" });
+>>>>>>> Stashed changes
 =======
         const out = await requestPort("AI_CHAT", { text: q, lang: detectedLang, provider: "jd" });
 >>>>>>> Stashed changes

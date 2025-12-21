@@ -278,6 +278,9 @@ chrome.runtime.onMessage.addListener((msg) => {
         finishJob(pendingOrders, jobId, msg.payload || {});
         return;
     }
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
 });
 
