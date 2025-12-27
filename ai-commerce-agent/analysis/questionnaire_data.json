@@ -1,0 +1,668 @@
+{
+  "metadata": {
+    "pre_test_file": "pre-test_Tsinghua University AI E-commerce Assistant_7_6(Sheet1).csv",
+    "post_test_file": "pos-test_Tsinghua University - AI E-commerce Assistant Experience Evaluation_6_6(Sheet1).csv",
+    "num_pre_questions": 34,
+    "num_post_questions": 16,
+    "num_pre_responses": 6,
+    "num_post_responses": 6
+  },
+  "pre_test": {
+    "questions": [
+      {
+        "index": 6,
+        "original": "1????? (Gender)?",
+        "cleaned": "Gender)"
+      },
+      {
+        "index": 7,
+        "original": "2????????Cultural Background)?",
+        "cleaned": "Cultural Background)"
+      },
+      {
+        "index": 8,
+        "original": "3?????? (Age)?",
+        "cleaned": "Age)"
+      },
+      {
+        "index": 9,
+        "original": "4????????? (What is your current occupation)(?? Student)",
+        "cleaned": "What is your current occupation)("
+      },
+      {
+        "index": 10,
+        "original": "4?(???? / ???? Student and Intern)",
+        "cleaned": "Student and Intern)"
+      },
+      {
+        "index": 11,
+        "original": "4?(????? No occupation)",
+        "cleaned": "No occupation)"
+      },
+      {
+        "index": 12,
+        "original": "5????? (Educational Background)",
+        "cleaned": "Educational Background)"
+      },
+      {
+        "index": 13,
+        "original": "6????????????????? (Have you ever used AI as assistant in general before?)",
+        "cleaned": "Have you ever used AI as assistant in general before"
+      },
+      {
+        "index": 14,
+        "original": "7?How often do you use generative AI tools in your daily life??????????????AI???????",
+        "cleaned": "How often do you use generative AI tools in your daily life"
+      },
+      {
+        "index": 15,
+        "original": "8???????AI???????????(???) What do you use generative AI tools for? (?? ?Study?)",
+        "cleaned": "AI"
+      },
+      {
+        "index": 16,
+        "original": "8?(?? (Work))",
+        "cleaned": "Work))"
+      },
+      {
+        "index": 17,
+        "original": "8?(?????? ?General Inquires in daily life?)",
+        "cleaned": "General Inquires in daily life"
+      },
+      {
+        "index": 18,
+        "original": "8?(???? ?Shopping?)",
+        "cleaned": "Shopping"
+      },
+      {
+        "index": 19,
+        "original": "8?(?????? ?Medical Consultation?)",
+        "cleaned": "Medical Consultation"
+      },
+      {
+        "index": 20,
+        "original": "8?(?????? ?All above?)",
+        "cleaned": "All above"
+      },
+      {
+        "index": 21,
+        "original": "8?(???????)",
+        "cleaned": "(???????)"
+      },
+      {
+        "index": 22,
+        "original": "9????????????????????????AI????Are you aware of the built-in AI assistant in e-commerce platform (e.g Taobao,JD, etc.)",
+        "cleaned": "AI"
+      },
+      {
+        "index": 23,
+        "original": "10????????????????AI?????Have you ever used the AI assistant function in e-commerce?",
+        "cleaned": "AI"
+      },
+      {
+        "index": 24,
+        "original": "11??????AI?????????????(???)What concerns do you have when use AI assistant in e-commerce?(???? (Privacy issues))",
+        "cleaned": "AI"
+      },
+      {
+        "index": 25,
+        "original": "11?(???????????????????) Inconvenient (Not easy to use, Confusing))",
+        "cleaned": "Inconvenient (Not easy to use, Confusing))"
+      },
+      {
+        "index": 26,
+        "original": "11?(????? (Not helpful))",
+        "cleaned": "Not helpful))"
+      },
+      {
+        "index": 27,
+        "original": "11?(????? (Irrelevant to my requirement))",
+        "cleaned": "Irrelevant to my requirement))"
+      },
+      {
+        "index": 28,
+        "original": "11?(???? (Over explanation))",
+        "cleaned": "Over explanation))"
+      },
+      {
+        "index": 29,
+        "original": "11?(?????? (Other))",
+        "cleaned": "Other))"
+      },
+      {
+        "index": 30,
+        "original": "12????AI???????????I think that AI in e-commerce is very helpful in e-commerce",
+        "cleaned": "AI"
+      },
+      {
+        "index": 31,
+        "original": "13?ExpectationAI???????????. The AI assistant should be visually easy to identify",
+        "cleaned": "ExpectationAI"
+      },
+      {
+        "index": 32,
+        "original": "13?AI??????????????. The AI assistant should be able to answer in my mother language.",
+        "cleaned": "AI"
+      },
+      {
+        "index": 33,
+        "original": "13?AI????????????????????????. Based on my shopping records, the AI assistant should be able to understand my preferences and shopping needs",
+        "cleaned": "AI"
+      },
+      {
+        "index": 34,
+        "original": "13????AI??????????????????. I feel like AI assistant analyzing my shopping records is an invasion of my privacy",
+        "cleaned": "AI"
+      },
+      {
+        "index": 35,
+        "original": "13??AI??????????????????????????????????????. I find it unnecessary when AI assistant gives extensive explanations or many alternatives. Just product link is enough",
+        "cleaned": "AI"
+      },
+      {
+        "index": 36,
+        "original": "13?????AI??????????????????????????????. I prefer recommendations given by AI assistant to be coupled with a clear, concise explanation as to why it suits me",
+        "cleaned": "AI"
+      },
+      {
+        "index": 37,
+        "original": "13?AI?????????????????? The AI should be able to give the most price-friendly product link and recommendations",
+        "cleaned": "AI"
+      },
+      {
+        "index": 38,
+        "original": "13?AI ??????????????????????????. The AI assistant Should be able to give me the correct and suitable product recommendation and link based on my inquiry.",
+        "cleaned": "AI"
+      },
+      {
+        "index": 39,
+        "original": "13????AI???????????????. I believe AI assistant can help improve my online shopping experience",
+        "cleaned": "AI"
+      }
+    ],
+    "responses": [
+      [
+        "2",
+        "2025/12/22 16:25:52",
+        "143?",
+        "??",
+        "N/A",
+        "59.66.138.76(??-??)",
+        "1",
+        "2",
+        "2",
+        "1",
+        "0",
+        "0",
+        "2",
+        "1",
+        "4",
+        "1",
+        "1",
+        "1",
+        "0",
+        "0",
+        "0",
+        "0",
+        "1",
+        "2",
+        "1",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "4",
+        "5",
+        "5",
+        "5",
+        "5",
+        "3",
+        "4",
+        "5",
+        "5",
+        "4"
+      ],
+      [
+        "3",
+        "2025/12/22 16:26:12",
+        "135?",
+        "??",
+        "N/A",
+        "183.172.34.123(??-??)",
+        "1",
+        "2",
+        "2",
+        "1",
+        "1",
+        "0",
+        "2",
+        "1",
+        "2",
+        "1",
+        "1",
+        "0",
+        "1",
+        "0",
+        "0",
+        "0",
+        "1",
+        "2",
+        "1",
+        "0",
+        "0",
+        "1",
+        "0",
+        "0",
+        "5",
+        "5",
+        "5",
+        "4",
+        "5",
+        "5",
+        "2",
+        "5",
+        "5",
+        "4"
+      ],
+      [
+        "4",
+        "2025/12/23 16:20:38",
+        "63?",
+        "??",
+        "????",
+        "223.104.202.190(??-??)",
+        "1",
+        "1",
+        "2",
+        "1",
+        "0",
+        "0",
+        "3",
+        "1",
+        "1",
+        "1",
+        "1",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "2",
+        "2",
+        "0",
+        "0",
+        "0",
+        "1",
+        "1",
+        "0",
+        "4",
+        "4",
+        "4",
+        "2",
+        "2",
+        "4",
+        "4",
+        "2",
+        "4",
+        "4"
+      ],
+      [
+        "5",
+        "2025/12/23 17:52:36",
+        "176?",
+        "??",
+        "N/A",
+        "158.173.230.212(??-??)",
+        "1",
+        "1",
+        "2",
+        "1",
+        "0",
+        "0",
+        "1",
+        "1",
+        "1",
+        "1",
+        "1",
+        "1",
+        "0",
+        "0",
+        "0",
+        "0",
+        "2",
+        "2",
+        "1",
+        "1",
+        "0",
+        "0",
+        "1",
+        "0",
+        "3",
+        "4",
+        "5",
+        "4",
+        "3",
+        "3",
+        "5",
+        "4",
+        "4",
+        "4"
+      ],
+      [
+        "6",
+        "2025/12/24 20:09:17",
+        "192?",
+        "??",
+        "N/A",
+        "114.244.128.54(??-??)",
+        "1",
+        "1",
+        "3",
+        "1",
+        "0",
+        "0",
+        "3",
+        "1",
+        "1",
+        "1",
+        "1",
+        "1",
+        "0",
+        "1",
+        "0",
+        "0",
+        "2",
+        "2",
+        "0",
+        "0",
+        "0",
+        "0",
+        "1",
+        "1",
+        "3",
+        "5",
+        "5",
+        "5",
+        "4",
+        "2",
+        "4",
+        "5",
+        "5",
+        "3"
+      ],
+      [
+        "7",
+        "2025/12/24 21:34:45",
+        "173?",
+        "??",
+        "N/A",
+        "158.173.230.212(??-??)",
+        "2",
+        "2",
+        "2",
+        "1",
+        "0",
+        "0",
+        "1",
+        "1",
+        "1",
+        "1",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "2",
+        "1",
+        "1",
+        "1",
+        "0",
+        "0",
+        "0",
+        "0",
+        "4",
+        "5",
+        "5",
+        "3",
+        "5",
+        "4",
+        "4",
+        "4",
+        "4",
+        "5"
+      ]
+    ]
+  },
+  "post_test": {
+    "questions": [
+      {
+        "index": 6,
+        "original": "1????? (Gender)?",
+        "cleaned": "Gender)"
+      },
+      {
+        "index": 7,
+        "original": "2????????Cultural Background)?",
+        "cleaned": "Cultural Background)"
+      },
+      {
+        "index": 8,
+        "original": "3?????? (Age)?",
+        "cleaned": "Age)"
+      },
+      {
+        "index": 9,
+        "original": "4????????? (What is your current occupation)(?? Student)",
+        "cleaned": "What is your current occupation)("
+      },
+      {
+        "index": 10,
+        "original": "4?(???? / ???? Student and Intern)",
+        "cleaned": "Student and Intern)"
+      },
+      {
+        "index": 11,
+        "original": "4?(????? No occupation)",
+        "cleaned": "No occupation)"
+      },
+      {
+        "index": 12,
+        "original": "5????? (Educational Background)",
+        "cleaned": "Educational Background)"
+      },
+      {
+        "index": 13,
+        "original": "6?Expectation桝I??????????.The AI assistant is visually easy to identify.",
+        "cleaned": "Expectation桝I"
+      },
+      {
+        "index": 14,
+        "original": "6?AI??????????????The AI assistant is able to answer in my mother language.",
+        "cleaned": "AI"
+      },
+      {
+        "index": 15,
+        "original": "6??????????AI????????????????Based on my shopping records, the AI assistant is able to understand my preferences and shopping needs.",
+        "cleaned": "AI"
+      },
+      {
+        "index": 16,
+        "original": "6?????AI??????????I am not worried about AI assistant analyzing my shopping records.",
+        "cleaned": "AI"
+      },
+      {
+        "index": 17,
+        "original": "6????AI?????????????????????????????????I found that the AI assistant quickly gave me direct links without many unnecessary alternatives and over explanation",
+        "cleaned": "AI"
+      },
+      {
+        "index": 18,
+        "original": "6?AI??????????????????????????The recommendations given by AI assistant are coupled with a clear, concise explanation as to why it suits me",
+        "cleaned": "AI"
+      },
+      {
+        "index": 19,
+        "original": "6?AI?????????????????The AI was able to give the most price-friendly product link and recommendations.",
+        "cleaned": "AI"
+      },
+      {
+        "index": 20,
+        "original": "6?AI?????????????????????????The AI assistant was be able to give me the correct and suitable product recommendation and link based on my inquiry.",
+        "cleaned": "AI"
+      },
+      {
+        "index": 21,
+        "original": "6????AI???????????????I believe the AI assistant helped improve my online shopping experience.",
+        "cleaned": "AI"
+      }
+    ],
+    "responses": [
+      [
+        "1",
+        "2025/12/22 16:32:41",
+        "64?",
+        "??",
+        "N/A",
+        "183.172.34.123(??-??)",
+        "1",
+        "2",
+        "2",
+        "1",
+        "1",
+        "0",
+        "2",
+        "5",
+        "5",
+        "5",
+        "2",
+        "5",
+        "5",
+        "3",
+        "5",
+        "5"
+      ],
+      [
+        "2",
+        "2025/12/22 16:37:59",
+        "113?",
+        "??",
+        "N/A",
+        "59.66.138.76(??-??)",
+        "1",
+        "2",
+        "2",
+        "1",
+        "0",
+        "0",
+        "2",
+        "5",
+        "5",
+        "5",
+        "3",
+        "4",
+        "4",
+        "4",
+        "5",
+        "4"
+      ],
+      [
+        "3",
+        "2025/12/23 16:21:20",
+        "38?",
+        "??",
+        "????",
+        "223.104.202.190(??-??)",
+        "1",
+        "1",
+        "3",
+        "1",
+        "0",
+        "0",
+        "3",
+        "3",
+        "4",
+        "2",
+        "3",
+        "3",
+        "2",
+        "4",
+        "4",
+        "4"
+      ],
+      [
+        "4",
+        "2025/12/23 17:54:14",
+        "86?",
+        "??",
+        "N/A",
+        "158.173.230.212(??-??)",
+        "1",
+        "1",
+        "2",
+        "1",
+        "0",
+        "0",
+        "1",
+        "4",
+        "5",
+        "4",
+        "4",
+        "4",
+        "5",
+        "4",
+        "4",
+        "4"
+      ],
+      [
+        "5",
+        "2025/12/24 20:52:10",
+        "52?",
+        "??",
+        "N/A",
+        "114.244.128.54(??-??)",
+        "1",
+        "1",
+        "3",
+        "1",
+        "0",
+        "0",
+        "3",
+        "5",
+        "5",
+        "4",
+        "3",
+        "5",
+        "2",
+        "5",
+        "5",
+        "5"
+      ],
+      [
+        "6",
+        "2025/12/24 21:57:18",
+        "73?",
+        "??",
+        "N/A",
+        "158.173.230.212(??-??)",
+        "2",
+        "2",
+        "2",
+        "1",
+        "0",
+        "0",
+        "1",
+        "3",
+        "5",
+        "4",
+        "4",
+        "3",
+        "4",
+        "4",
+        "4",
+        "5"
+      ]
+    ]
+  }
+}

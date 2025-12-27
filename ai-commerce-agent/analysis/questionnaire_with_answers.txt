@@ -1,0 +1,774 @@
+====================================================================================================
+QUESTIONNAIRE WITH PARTICIPANT ANSWERS
+AI E-commerce Assistant Experience Evaluation
+====================================================================================================
+
+====================================================================================================
+PRE-TEST QUESTIONNAIRE
+====================================================================================================
+
+Q1 (Column 6): Gender)
+   Original: 1????? (Gender)?
+
+   Participant Answers:
+      Participant 1: 1
+      Participant 2: 1
+      Participant 3: 1
+      Participant 4: 1
+      Participant 5: 1
+      Participant 6: 2
+
+   Statistics: Mean = 1.17, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q2 (Column 7): Cultural Background)
+   Original: 2????????Cultural Background)?
+
+   Participant Answers:
+      Participant 1: 2
+      Participant 2: 2
+      Participant 3: 1
+      Participant 4: 1
+      Participant 5: 1
+      Participant 6: 2
+
+   Statistics: Mean = 1.50, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q3 (Column 8): Age)
+   Original: 3?????? (Age)?
+
+   Participant Answers:
+      Participant 1: 2
+      Participant 2: 2
+      Participant 3: 2
+      Participant 4: 2
+      Participant 5: 3
+      Participant 6: 2
+
+   Statistics: Mean = 2.17, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q4 (Column 9): What is your current occupation)(
+   Original: 4????????? (What is your current occupation)(?? Student)
+
+   Participant Answers:
+      Participant 1: 1
+      Participant 2: 1
+      Participant 3: 1
+      Participant 4: 1
+      Participant 5: 1
+      Participant 6: 1
+
+   Statistics: Mean = 1.00, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q5 (Column 10): Student and Intern)
+   Original: 4?(???? / ???? Student and Intern)
+
+   Participant Answers:
+      Participant 1: 0
+      Participant 2: 1
+      Participant 3: 0
+      Participant 4: 0
+      Participant 5: 0
+      Participant 6: 0
+
+   Statistics: Mean = 0.17, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q6 (Column 11): No occupation)
+   Original: 4?(????? No occupation)
+
+   Participant Answers:
+      Participant 1: 0
+      Participant 2: 0
+      Participant 3: 0
+      Participant 4: 0
+      Participant 5: 0
+      Participant 6: 0
+
+   Statistics: Mean = 0.00, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q7 (Column 12): Educational Background)
+   Original: 5????? (Educational Background)
+
+   Participant Answers:
+      Participant 1: 2
+      Participant 2: 2
+      Participant 3: 3
+      Participant 4: 1
+      Participant 5: 3
+      Participant 6: 1
+
+   Statistics: Mean = 2.00, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q8 (Column 13): Have you ever used AI as assistant in general before
+   Original: 6????????????????? (Have you ever used AI as assistant in general before?)
+
+   Participant Answers:
+      Participant 1: 1
+      Participant 2: 1
+      Participant 3: 1
+      Participant 4: 1
+      Participant 5: 1
+      Participant 6: 1
+
+   Statistics: Mean = 1.00, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q9 (Column 14): How often do you use generative AI tools in your daily life
+   Original: 7?How often do you use generative AI tools in your daily life??????????????AI???????
+
+   Participant Answers:
+      Participant 1: 4
+      Participant 2: 2
+      Participant 3: 1
+      Participant 4: 1
+      Participant 5: 1
+      Participant 6: 1
+
+   Statistics: Mean = 1.67, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q10 (Column 15): AI
+   Original: 8???????AI???????????(???) What do you use generative AI tools for? (?? ?Study?)
+
+   Participant Answers:
+      Participant 1: 1
+      Participant 2: 1
+      Participant 3: 1
+      Participant 4: 1
+      Participant 5: 1
+      Participant 6: 1
+
+   Statistics: Mean = 1.00, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q11 (Column 16): Work))
+   Original: 8?(?? (Work))
+
+   Participant Answers:
+      Participant 1: 1
+      Participant 2: 1
+      Participant 3: 1
+      Participant 4: 1
+      Participant 5: 1
+      Participant 6: 0
+
+   Statistics: Mean = 0.83, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q12 (Column 17): General Inquires in daily life
+   Original: 8?(?????? ?General Inquires in daily life?)
+
+   Participant Answers:
+      Participant 1: 1
+      Participant 2: 0
+      Participant 3: 0
+      Participant 4: 1
+      Participant 5: 1
+      Participant 6: 0
+
+   Statistics: Mean = 0.50, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q13 (Column 18): Shopping
+   Original: 8?(???? ?Shopping?)
+
+   Participant Answers:
+      Participant 1: 0
+      Participant 2: 1
+      Participant 3: 0
+      Participant 4: 0
+      Participant 5: 0
+      Participant 6: 0
+
+   Statistics: Mean = 0.17, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q14 (Column 19): Medical Consultation
+   Original: 8?(?????? ?Medical Consultation?)
+
+   Participant Answers:
+      Participant 1: 0
+      Participant 2: 0
+      Participant 3: 0
+      Participant 4: 0
+      Participant 5: 1
+      Participant 6: 0
+
+   Statistics: Mean = 0.17, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q15 (Column 20): All above
+   Original: 8?(?????? ?All above?)
+
+   Participant Answers:
+      Participant 1: 0
+      Participant 2: 0
+      Participant 3: 0
+      Participant 4: 0
+      Participant 5: 0
+      Participant 6: 0
+
+   Statistics: Mean = 0.00, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q16 (Column 21): (???????)
+   Original: 8?(???????)
+
+   Participant Answers:
+      Participant 1: 0
+      Participant 2: 0
+      Participant 3: 0
+      Participant 4: 0
+      Participant 5: 0
+      Participant 6: 0
+
+   Statistics: Mean = 0.00, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q17 (Column 22): AI
+   Original: 9????????????????????????AI????Are you aware of the built-in AI assistant in e-commerce platform (e.g Taobao,JD, etc.)
+
+   Participant Answers:
+      Participant 1: 1
+      Participant 2: 1
+      Participant 3: 2
+      Participant 4: 2
+      Participant 5: 2
+      Participant 6: 2
+
+   Statistics: Mean = 1.67, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q18 (Column 23): AI
+   Original: 10????????????????AI?????Have you ever used the AI assistant function in e-commerce?
+
+   Participant Answers:
+      Participant 1: 2
+      Participant 2: 2
+      Participant 3: 2
+      Participant 4: 2
+      Participant 5: 2
+      Participant 6: 1
+
+   Statistics: Mean = 1.83, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q19 (Column 24): AI
+   Original: 11??????AI?????????????(???)What concerns do you have when use AI assistant in e-commerce?(???? (Privacy issues))
+
+   Participant Answers:
+      Participant 1: 1
+      Participant 2: 1
+      Participant 3: 0
+      Participant 4: 1
+      Participant 5: 0
+      Participant 6: 1
+
+   Statistics: Mean = 0.67, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q20 (Column 25): Inconvenient (Not easy to use, Confusing))
+   Original: 11?(???????????????????) Inconvenient (Not easy to use, Confusing))
+
+   Participant Answers:
+      Participant 1: 0
+      Participant 2: 0
+      Participant 3: 0
+      Participant 4: 1
+      Participant 5: 0
+      Participant 6: 1
+
+   Statistics: Mean = 0.33, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q21 (Column 26): Not helpful))
+   Original: 11?(????? (Not helpful))
+
+   Participant Answers:
+      Participant 1: 0
+      Participant 2: 0
+      Participant 3: 0
+      Participant 4: 0
+      Participant 5: 0
+      Participant 6: 0
+
+   Statistics: Mean = 0.00, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q22 (Column 27): Irrelevant to my requirement))
+   Original: 11?(????? (Irrelevant to my requirement))
+
+   Participant Answers:
+      Participant 1: 0
+      Participant 2: 1
+      Participant 3: 1
+      Participant 4: 0
+      Participant 5: 0
+      Participant 6: 0
+
+   Statistics: Mean = 0.33, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q23 (Column 28): Over explanation))
+   Original: 11?(???? (Over explanation))
+
+   Participant Answers:
+      Participant 1: 0
+      Participant 2: 0
+      Participant 3: 1
+      Participant 4: 1
+      Participant 5: 1
+      Participant 6: 0
+
+   Statistics: Mean = 0.50, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q24 (Column 29): Other))
+   Original: 11?(?????? (Other))
+
+   Participant Answers:
+      Participant 1: 0
+      Participant 2: 0
+      Participant 3: 0
+      Participant 4: 0
+      Participant 5: 1
+      Participant 6: 0
+
+   Statistics: Mean = 0.17, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q25 (Column 30): AI
+   Original: 12????AI???????????I think that AI in e-commerce is very helpful in e-commerce
+
+   Participant Answers:
+      Participant 1: 4
+      Participant 2: 5
+      Participant 3: 4
+      Participant 4: 3
+      Participant 5: 3
+      Participant 6: 4
+
+   Statistics: Mean = 3.83, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q26 (Column 31): ExpectationAI
+   Original: 13?ExpectationAI???????????. The AI assistant should be visually easy to identify
+
+   Participant Answers:
+      Participant 1: 5
+      Participant 2: 5
+      Participant 3: 4
+      Participant 4: 4
+      Participant 5: 5
+      Participant 6: 5
+
+   Statistics: Mean = 4.67, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q27 (Column 32): AI
+   Original: 13?AI??????????????. The AI assistant should be able to answer in my mother language.
+
+   Participant Answers:
+      Participant 1: 5
+      Participant 2: 5
+      Participant 3: 4
+      Participant 4: 5
+      Participant 5: 5
+      Participant 6: 5
+
+   Statistics: Mean = 4.83, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q28 (Column 33): AI
+   Original: 13?AI????????????????????????. Based on my shopping records, the AI assistant should be able to understand my preferences and shopping needs
+
+   Participant Answers:
+      Participant 1: 5
+      Participant 2: 4
+      Participant 3: 2
+      Participant 4: 4
+      Participant 5: 5
+      Participant 6: 3
+
+   Statistics: Mean = 3.83, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q29 (Column 34): AI
+   Original: 13????AI??????????????????. I feel like AI assistant analyzing my shopping records is an invasion of my privacy
+
+   Participant Answers:
+      Participant 1: 5
+      Participant 2: 5
+      Participant 3: 2
+      Participant 4: 3
+      Participant 5: 4
+      Participant 6: 5
+
+   Statistics: Mean = 4.00, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q30 (Column 35): AI
+   Original: 13??AI??????????????????????????????????????. I find it unnecessary when AI assistant gives extensive explanations or many alternatives. Just product link is enough
+
+   Participant Answers:
+      Participant 1: 3
+      Participant 2: 5
+      Participant 3: 4
+      Participant 4: 3
+      Participant 5: 2
+      Participant 6: 4
+
+   Statistics: Mean = 3.50, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q31 (Column 36): AI
+   Original: 13?????AI??????????????????????????????. I prefer recommendations given by AI assistant to be coupled with a clear, concise explanation as to why it suits me
+
+   Participant Answers:
+      Participant 1: 4
+      Participant 2: 2
+      Participant 3: 4
+      Participant 4: 5
+      Participant 5: 4
+      Participant 6: 4
+
+   Statistics: Mean = 3.83, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q32 (Column 37): AI
+   Original: 13?AI?????????????????? The AI should be able to give the most price-friendly product link and recommendations
+
+   Participant Answers:
+      Participant 1: 5
+      Participant 2: 5
+      Participant 3: 2
+      Participant 4: 4
+      Participant 5: 5
+      Participant 6: 4
+
+   Statistics: Mean = 4.17, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q33 (Column 38): AI
+   Original: 13?AI ??????????????????????????. The AI assistant Should be able to give me the correct and suitable product recommendation and link based on my inquiry.
+
+   Participant Answers:
+      Participant 1: 5
+      Participant 2: 5
+      Participant 3: 4
+      Participant 4: 4
+      Participant 5: 5
+      Participant 6: 4
+
+   Statistics: Mean = 4.50, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q34 (Column 39): AI
+   Original: 13????AI???????????????. I believe AI assistant can help improve my online shopping experience
+
+   Participant Answers:
+      Participant 1: 4
+      Participant 2: 4
+      Participant 3: 4
+      Participant 4: 4
+      Participant 5: 3
+      Participant 6: 5
+
+   Statistics: Mean = 4.00, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+
+====================================================================================================
+POST-TEST QUESTIONNAIRE
+====================================================================================================
+
+Q1 (Column 6): Gender)
+   Original: 1????? (Gender)?
+
+   Participant Answers:
+      Participant 1: 1
+      Participant 2: 1
+      Participant 3: 1
+      Participant 4: 1
+      Participant 5: 1
+      Participant 6: 2
+
+   Statistics: Mean = 1.17, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q2 (Column 7): Cultural Background)
+   Original: 2????????Cultural Background)?
+
+   Participant Answers:
+      Participant 1: 2
+      Participant 2: 2
+      Participant 3: 1
+      Participant 4: 1
+      Participant 5: 1
+      Participant 6: 2
+
+   Statistics: Mean = 1.50, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q3 (Column 8): Age)
+   Original: 3?????? (Age)?
+
+   Participant Answers:
+      Participant 1: 2
+      Participant 2: 2
+      Participant 3: 3
+      Participant 4: 2
+      Participant 5: 3
+      Participant 6: 2
+
+   Statistics: Mean = 2.33, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q4 (Column 9): What is your current occupation)(
+   Original: 4????????? (What is your current occupation)(?? Student)
+
+   Participant Answers:
+      Participant 1: 1
+      Participant 2: 1
+      Participant 3: 1
+      Participant 4: 1
+      Participant 5: 1
+      Participant 6: 1
+
+   Statistics: Mean = 1.00, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q5 (Column 10): Student and Intern)
+   Original: 4?(???? / ???? Student and Intern)
+
+   Participant Answers:
+      Participant 1: 1
+      Participant 2: 0
+      Participant 3: 0
+      Participant 4: 0
+      Participant 5: 0
+      Participant 6: 0
+
+   Statistics: Mean = 0.17, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q6 (Column 11): No occupation)
+   Original: 4?(????? No occupation)
+
+   Participant Answers:
+      Participant 1: 0
+      Participant 2: 0
+      Participant 3: 0
+      Participant 4: 0
+      Participant 5: 0
+      Participant 6: 0
+
+   Statistics: Mean = 0.00, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q7 (Column 12): Educational Background)
+   Original: 5????? (Educational Background)
+
+   Participant Answers:
+      Participant 1: 2
+      Participant 2: 2
+      Participant 3: 3
+      Participant 4: 1
+      Participant 5: 3
+      Participant 6: 1
+
+   Statistics: Mean = 2.00, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q8 (Column 13): Expectation桝I
+   Original: 6?Expectation桝I??????????.The AI assistant is visually easy to identify.
+
+   Participant Answers:
+      Participant 1: 5
+      Participant 2: 5
+      Participant 3: 3
+      Participant 4: 4
+      Participant 5: 5
+      Participant 6: 3
+
+   Statistics: Mean = 4.17, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q9 (Column 14): AI
+   Original: 6?AI??????????????The AI assistant is able to answer in my mother language.
+
+   Participant Answers:
+      Participant 1: 5
+      Participant 2: 5
+      Participant 3: 4
+      Participant 4: 5
+      Participant 5: 5
+      Participant 6: 5
+
+   Statistics: Mean = 4.83, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q10 (Column 15): AI
+   Original: 6??????????AI????????????????Based on my shopping records, the AI assistant is able to understand my preferences and shopping needs.
+
+   Participant Answers:
+      Participant 1: 5
+      Participant 2: 5
+      Participant 3: 2
+      Participant 4: 4
+      Participant 5: 4
+      Participant 6: 4
+
+   Statistics: Mean = 4.00, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q11 (Column 16): AI
+   Original: 6?????AI??????????I am not worried about AI assistant analyzing my shopping records.
+
+   Participant Answers:
+      Participant 1: 2
+      Participant 2: 3
+      Participant 3: 3
+      Participant 4: 4
+      Participant 5: 3
+      Participant 6: 4
+
+   Statistics: Mean = 3.17, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q12 (Column 17): AI
+   Original: 6????AI?????????????????????????????????I found that the AI assistant quickly gave me direct links without many unnecessary alternatives and over explanation
+
+   Participant Answers:
+      Participant 1: 5
+      Participant 2: 4
+      Participant 3: 3
+      Participant 4: 4
+      Participant 5: 5
+      Participant 6: 3
+
+   Statistics: Mean = 4.00, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q13 (Column 18): AI
+   Original: 6?AI??????????????????????????The recommendations given by AI assistant are coupled with a clear, concise explanation as to why it suits me
+
+   Participant Answers:
+      Participant 1: 5
+      Participant 2: 4
+      Participant 3: 2
+      Participant 4: 5
+      Participant 5: 2
+      Participant 6: 4
+
+   Statistics: Mean = 3.67, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q14 (Column 19): AI
+   Original: 6?AI?????????????????The AI was able to give the most price-friendly product link and recommendations.
+
+   Participant Answers:
+      Participant 1: 3
+      Participant 2: 4
+      Participant 3: 4
+      Participant 4: 4
+      Participant 5: 5
+      Participant 6: 4
+
+   Statistics: Mean = 4.00, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q15 (Column 20): AI
+   Original: 6?AI?????????????????????????The AI assistant was be able to give me the correct and suitable product recommendation and link based on my inquiry.
+
+   Participant Answers:
+      Participant 1: 5
+      Participant 2: 5
+      Participant 3: 4
+      Participant 4: 4
+      Participant 5: 5
+      Participant 6: 4
+
+   Statistics: Mean = 4.50, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+Q16 (Column 21): AI
+   Original: 6????AI???????????????I believe the AI assistant helped improve my online shopping experience.
+
+   Participant Answers:
+      Participant 1: 5
+      Participant 2: 4
+      Participant 3: 4
+      Participant 4: 4
+      Participant 5: 5
+      Participant 6: 5
+
+   Statistics: Mean = 4.50, N = 6
+
+----------------------------------------------------------------------------------------------------
+
+
+====================================================================================================
+SUMMARY
+====================================================================================================
+
+Pre-test: 34 questions, 6 participants
+Post-test: 16 questions, 6 participants
+
+Note: 6 participants completed both pre and post tests.
+Participants can be matched for paired analysis.

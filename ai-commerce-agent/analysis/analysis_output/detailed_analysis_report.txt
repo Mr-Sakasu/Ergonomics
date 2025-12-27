@@ -1,0 +1,185 @@
+====================================================================================================
+DETAILED STATISTICAL ANALYSIS REPORT
+AI E-commerce Assistant Experience Evaluation
+====================================================================================================
+
+DATA SUMMARY
+----------------------------------------------------------------------------------------------------
+Pre-test: 34 questions, 6 participants
+Post-test: 16 questions, 6 participants
+Numeric questions (Likert scale): Pre=34, Post=16
+
+PRE-TEST DESCRIPTIVE STATISTICS
+----------------------------------------------------------------------------------------------------
+
+Q6: Gender)...
+  Mean: 1.17, Median: 1.00, Std: 0.41, N: 6
+
+Q7: Cultural Background)...
+  Mean: 1.50, Median: 1.50, Std: 0.55, N: 6
+
+Q8: Age)...
+  Mean: 2.17, Median: 2.00, Std: 0.41, N: 6
+
+Q9: What is your current occupation)(...
+  Mean: 1.00, Median: 1.00, Std: 0.00, N: 6
+
+Q10: Student and Intern)...
+  Mean: 0.17, Median: 0.00, Std: 0.41, N: 6
+
+Q11: No occupation)...
+  Mean: 0.00, Median: 0.00, Std: 0.00, N: 6
+
+Q12: Educational Background)...
+  Mean: 2.00, Median: 2.00, Std: 0.89, N: 6
+
+Q13: Have you ever used AI as assistant in general before...
+  Mean: 1.00, Median: 1.00, Std: 0.00, N: 6
+
+Q14: How often do you use generative AI tools in your daily life...
+  Mean: 1.67, Median: 1.00, Std: 1.21, N: 6
+
+Q15: AI...
+  Mean: 1.00, Median: 1.00, Std: 0.00, N: 6
+
+Q16: Work))...
+  Mean: 0.83, Median: 1.00, Std: 0.41, N: 6
+
+Q17: General Inquires in daily life...
+  Mean: 0.50, Median: 0.50, Std: 0.55, N: 6
+
+Q18: Shopping...
+  Mean: 0.17, Median: 0.00, Std: 0.41, N: 6
+
+Q19: Medical Consultation...
+  Mean: 0.17, Median: 0.00, Std: 0.41, N: 6
+
+Q20: All above...
+  Mean: 0.00, Median: 0.00, Std: 0.00, N: 6
+
+Q21: (???????)...
+  Mean: 0.00, Median: 0.00, Std: 0.00, N: 6
+
+Q22: AI...
+  Mean: 1.67, Median: 2.00, Std: 0.52, N: 6
+
+Q23: AI...
+  Mean: 1.83, Median: 2.00, Std: 0.41, N: 6
+
+Q24: AI...
+  Mean: 0.67, Median: 1.00, Std: 0.52, N: 6
+
+Q25: Inconvenient (Not easy to use, Confusing))...
+  Mean: 0.33, Median: 0.00, Std: 0.52, N: 6
+
+Q26: Not helpful))...
+  Mean: 0.00, Median: 0.00, Std: 0.00, N: 6
+
+Q27: Irrelevant to my requirement))...
+  Mean: 0.33, Median: 0.00, Std: 0.52, N: 6
+
+Q28: Over explanation))...
+  Mean: 0.50, Median: 0.50, Std: 0.55, N: 6
+
+Q29: Other))...
+  Mean: 0.17, Median: 0.00, Std: 0.41, N: 6
+
+Q30: AI...
+  Mean: 3.83, Median: 4.00, Std: 0.75, N: 6
+
+Q31: ExpectationAI...
+  Mean: 4.67, Median: 5.00, Std: 0.52, N: 6
+
+Q32: AI...
+  Mean: 4.83, Median: 5.00, Std: 0.41, N: 6
+
+Q33: AI...
+  Mean: 3.83, Median: 4.00, Std: 1.17, N: 6
+
+Q34: AI...
+  Mean: 4.00, Median: 4.50, Std: 1.26, N: 6
+
+Q35: AI...
+  Mean: 3.50, Median: 3.50, Std: 1.05, N: 6
+
+Q36: AI...
+  Mean: 3.83, Median: 4.00, Std: 0.98, N: 6
+
+Q37: AI...
+  Mean: 4.17, Median: 4.50, Std: 1.17, N: 6
+
+Q38: AI...
+  Mean: 4.50, Median: 4.50, Std: 0.55, N: 6
+
+Q39: AI...
+  Mean: 4.00, Median: 4.00, Std: 0.63, N: 6
+
+
+POST-TEST DESCRIPTIVE STATISTICS
+----------------------------------------------------------------------------------------------------
+
+Q6: Gender)...
+  Mean: 1.17, Median: 1.00, Std: 0.41, N: 6
+
+Q7: Cultural Background)...
+  Mean: 1.50, Median: 1.50, Std: 0.55, N: 6
+
+Q8: Age)...
+  Mean: 2.33, Median: 2.00, Std: 0.52, N: 6
+
+Q9: What is your current occupation)(...
+  Mean: 1.00, Median: 1.00, Std: 0.00, N: 6
+
+Q10: Student and Intern)...
+  Mean: 0.17, Median: 0.00, Std: 0.41, N: 6
+
+Q11: No occupation)...
+  Mean: 0.00, Median: 0.00, Std: 0.00, N: 6
+
+Q12: Educational Background)...
+  Mean: 2.00, Median: 2.00, Std: 0.89, N: 6
+
+Q13: Expectation桝I...
+  Mean: 4.17, Median: 4.50, Std: 0.98, N: 6
+
+Q14: AI...
+  Mean: 4.83, Median: 5.00, Std: 0.41, N: 6
+
+Q15: AI...
+  Mean: 4.00, Median: 4.00, Std: 1.10, N: 6
+
+Q16: AI...
+  Mean: 3.17, Median: 3.00, Std: 0.75, N: 6
+
+Q17: AI...
+  Mean: 4.00, Median: 4.00, Std: 0.89, N: 6
+
+Q18: AI...
+  Mean: 3.67, Median: 4.00, Std: 1.37, N: 6
+
+Q19: AI...
+  Mean: 4.00, Median: 4.00, Std: 0.63, N: 6
+
+Q20: AI...
+  Mean: 4.50, Median: 4.50, Std: 0.55, N: 6
+
+Q21: AI...
+  Mean: 4.50, Median: 4.50, Std: 0.55, N: 6
+
+
+PAIRED COMPARISONS (Pre vs Post)
+----------------------------------------------------------------------------------------------------
+
+
+OVERALL COMPARISON
+----------------------------------------------------------------------------------------------------
+Overall Mean Score:
+  Pre-test:  1.76
+  Post-test: 2.81
+  Difference: 1.05
+  Change: 59.4%
+
+Paired t-test (overall scores):
+  t-statistic: 21.647
+  p-value: 0.0500
+  Statistically significant: No (α=0.05)
