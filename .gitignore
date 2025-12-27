@@ -51,3 +51,39 @@ jd_*_debug.*
 *.temp
 test_*.html
 
+# Analysis data files (sensitive participant data)
+ai-commerce-agent/analysis/*.csv
+ai-commerce-agent/analysis/*.sav
+ai-commerce-agent/analysis/*.xlsx
+ai-commerce-agent/analysis/*.xls
+ai-commerce-agent/analysis/*.docx
+
+# Analysis generated outputs
+ai-commerce-agent/analysis/analysis_output/
+ai-commerce-agent/analysis/questionnaire_data.json
+ai-commerce-agent/analysis/questionnaire_combined.txt
+ai-commerce-agent/analysis/questionnaire_with_answers.txt
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Python virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+# Analysis visualization outputs
+*.png
+*.jpg
+*.pdf
+!**/extension/**/*.png
+!**/extension/**/*.jpg
+
