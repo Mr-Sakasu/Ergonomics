@@ -45,6 +45,7 @@ jd_*_debug.*
 # Playwright / browser profiles
 .pw-*/
 **/.pw-*/
+*.pma
 
 # Temporary / test files
 *.tmp
@@ -57,6 +58,11 @@ ai-commerce-agent/analysis/*.sav
 ai-commerce-agent/analysis/*.xlsx
 ai-commerce-agent/analysis/*.xls
 ai-commerce-agent/analysis/*.docx
+ai-commerce-agent/analysis/*.json
+ai-commerce-agent/analysis/*.txt
+ai-commerce-agent/analysis/*.html
+ai-commerce-agent/analysis/analysis_summary.md
+!ai-commerce-agent/analysis/requirements.txt
 
 # Analysis generated outputs
 ai-commerce-agent/analysis/analysis_output/
@@ -86,4 +92,3 @@ ENV/
 *.pdf
 !**/extension/**/*.png
 !**/extension/**/*.jpg
-
