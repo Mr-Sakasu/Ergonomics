@@ -1,88 +1,36 @@
 # Ergonomics / AI Commerce Agent
 
-人間工学の授業プロジェクトとして作成した、AI を用いた E-commerce 支援プロトタイプです。
-Chrome Extension の side panel、軽量な API ハンドラ、アンケート分析用スクリプトを含みます。
+人間工学の授業プロジェクトとして作成した、AI を用いた E-commerce 支援プロトタイプです。オンラインショッピング中の検索、比較、入力支援を、Chrome Extension と AI API を組み合わせて実装しています。
 
-## 概要
+## 実装した機能
 
-オンラインショッピング中に AI assistant がどのように商品検索や比較を支援できるかを検証するためのプロジェクトです。主に JD.com の商品検索ページを対象に、以下の機能を実装しています。
+- 商品検索ページ上で使える side panel 型の AI assistant
+- JD.com の検索結果から商品名、価格、画像、店舗情報などを取得するスクレイピング
+- ユーザーの自然文入力を、検索に適した短いキーワードへ変換するクエリ生成
+- 日本語・英語・中国語などの入力に対応する言語判定と表示調整
+- 音声入力をテキスト化する speech-to-text
+- 商品画像から検索キーワードを作る image-to-query
+- アンケート結果を集計し、利用体験を分析する Python スクリプト
 
-- Chrome Extension の side panel UI
-- 検索ページ上の商品情報を取得する content script
-- 言語判定、検索クエリ生成、音声入力、画像からの検索語生成、商品検索を行う API ハンドラ
-- アンケート結果を集計・可視化する Python スクリプト
+## 技術スタック
 
-## ディレクトリ構成
+- Chrome Extension Manifest V3、`sidePanel` API、content scripts
+- JavaScript / HTML / CSS による拡張機能 UI
+- Node.js の API handlers とローカル検証用 Express server
+- OpenAI API による言語判定、検索クエリ生成、画像理解、音声認識
+- JD.com の DOM scraping と `cheerio` による商品情報抽出
+- SerpAPI による汎用の商品検索 fallback
+- Python、pandas、NumPy、SciPy、matplotlib、seaborn によるアンケート分析
 
-```text
-api/                         Serverless API ハンドラ
-ai-commerce-agent/extension/ Chrome Extension 本体
-ai-commerce-agent/server/    ローカル開発用 Express server
-ai-commerce-agent/analysis/  分析用スクリプト
-room/                        部屋レイアウト補助ファイル
-```
+## 実装上のポイント
 
-アンケートの raw data、生成レポート、ブラウザプロファイル、ローカル環境ファイル、依存パッケージのディレクトリは公開用のソースツリーから除外しています。
+拡張機能側では、閲覧中の検索ページから必要な商品情報だけを取得し、side panel に渡す構成にしています。AI 処理や外部検索は API handler 側に分けることで、UI、ページ解析、外部 API 呼び出しの責務を分離しています。
 
-## 環境変数
-
-実際の API key はコミットしません。`.env.example` または `ai-commerce-agent/server/.env.example` をコピーし、ローカルで値を設定してください。
-
-```bash
-OPENAI_API_KEY=
-OPENAI_API_BASE=https://api.openai.com
-OPENAI_MODEL=gpt-4.1-mini
-OPENAI_VISION_MODEL=gpt-4o-mini
-SERPAPI_KEY=
-JD_APP_KEY=
-JD_APP_SECRET=
-PORT=3000
-```
-
-コードは secret を環境変数から読み込みます。必要な key がない場合、endpoint によって限定的な fallback または mock 動作になります。
-
-## ローカル開発
-
-ルートの依存関係をインストールします。
-
-```bash
-npm install
-```
-
-ローカル server を起動する場合は以下を実行します。
-
-```bash
-cd ai-commerce-agent/server
-npm install
-cp .env.example .env
-npm start
-```
-
-Chrome Extension は、Chrome の拡張機能開発者モードから `ai-commerce-agent/extension/` を読み込んで使用します。
-
-## 分析
-
-`ai-commerce-agent/analysis/` には再利用可能な Python スクリプトと依存関係の情報のみを置きます。参加者ごとの raw data や生成レポートは Git に含めません。
-
-分析用の依存関係は以下でインストールできます。
-
-```bash
-pip install -r ai-commerce-agent/analysis/requirements.txt
-```
-
-アンケートファイルを使う場合は、ローカル作業用として `ai-commerce-agent/analysis/` に配置してください。これらのファイルは `.gitignore` で除外されています。
+API key や参加者データは公開リポジトリに含めない方針です。実際の secret は環境変数で扱い、アンケート raw data、生成レポート、ブラウザプロファイル、`node_modules/` は Git 管理から除外しています。
 
 ## 公開時の注意
 
-このリポジトリを public にする前に、現在のファイルだけでなく Git 履歴にも以下が残っていないことを確認してください。
-
-- `.env` ファイルや API key
-- `.pw-*` などのブラウザプロファイル
-- `node_modules/` ディレクトリ
-- アンケート raw data、出力レポート、参加者単位の記録
-- ローカル proxy/debug 用スクリプト
-
-現在の `.gitignore` はこれらが新しく追加されることを防ぎます。ただし、過去にコミットされた sensitive file は、リポジトリを public に変更する前に Git 履歴から削除する必要があります。
+現在のファイルツリーからは公開に向かないファイルを除外しています。ただし、過去の Git 履歴には sensitive file が残っている可能性があるため、リポジトリを public に変更する前には履歴の purge が必要です。
 
 ## 関連リンク
 
