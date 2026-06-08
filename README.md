@@ -1,38 +1,32 @@
 # Ergonomics / AI Commerce Agent
 
-AI-assisted e-commerce interaction prototype for an ergonomics class project.
-The repository contains a Chrome Extension side panel, lightweight API handlers,
-and questionnaire analysis scripts.
+人間工学の授業プロジェクトとして作成した、AI を用いた E-commerce 支援プロトタイプです。
+Chrome Extension の side panel、軽量な API ハンドラ、アンケート分析用スクリプトを含みます。
 
-## Overview
+## 概要
 
-This project explores how an AI assistant can support online shopping tasks.
-The prototype focuses on JD.com product search pages and provides:
+オンラインショッピング中に AI assistant がどのように商品検索や比較を支援できるかを検証するためのプロジェクトです。主に JD.com の商品検索ページを対象に、以下の機能を実装しています。
 
-- a Chrome Extension side panel UI
-- content scripts that extract visible product information from search pages
-- server/API handlers for language detection, query generation, speech-to-text,
-  image-to-query conversion, and product search
-- Python scripts for summarizing questionnaire results
+- Chrome Extension の side panel UI
+- 検索ページ上の商品情報を取得する content script
+- 言語判定、検索クエリ生成、音声入力、画像からの検索語生成、商品検索を行う API ハンドラ
+- アンケート結果を集計・可視化する Python スクリプト
 
-## Repository Layout
+## ディレクトリ構成
 
 ```text
-api/                         Serverless API handlers
-ai-commerce-agent/extension/ Chrome Extension source
-ai-commerce-agent/server/    Local Express server for development
-ai-commerce-agent/analysis/  Analysis scripts only
-room/                        Room-layout helper files
+api/                         Serverless API ハンドラ
+ai-commerce-agent/extension/ Chrome Extension 本体
+ai-commerce-agent/server/    ローカル開発用 Express server
+ai-commerce-agent/analysis/  分析用スクリプト
+room/                        部屋レイアウト補助ファイル
 ```
 
-Raw questionnaire files, generated reports, browser profiles, local
-environment files, and dependency directories are intentionally excluded from
-the public source tree.
+アンケートの raw data、生成レポート、ブラウザプロファイル、ローカル環境ファイル、依存パッケージのディレクトリは公開用のソースツリーから除外しています。
 
-## Environment Variables
+## 環境変数
 
-Do not commit real API keys. Copy `.env.example` or
-`ai-commerce-agent/server/.env.example` and fill values locally.
+実際の API key はコミットしません。`.env.example` または `ai-commerce-agent/server/.env.example` をコピーし、ローカルで値を設定してください。
 
 ```bash
 OPENAI_API_KEY=
@@ -45,18 +39,17 @@ JD_APP_SECRET=
 PORT=3000
 ```
 
-The code reads secrets from environment variables only. Missing keys should
-fall back to limited or mock behavior depending on the endpoint.
+コードは secret を環境変数から読み込みます。必要な key がない場合、endpoint によって限定的な fallback または mock 動作になります。
 
-## Local Development
+## ローカル開発
 
-Install root dependencies:
+ルートの依存関係をインストールします。
 
 ```bash
 npm install
 ```
 
-Install local server dependencies:
+ローカル server を起動する場合は以下を実行します。
 
 ```bash
 cd ai-commerce-agent/server
@@ -65,40 +58,33 @@ cp .env.example .env
 npm start
 ```
 
-Load the extension from `ai-commerce-agent/extension/` in Chrome's extension
-developer mode.
+Chrome Extension は、Chrome の拡張機能開発者モードから `ai-commerce-agent/extension/` を読み込んで使用します。
 
-## Analysis
+## 分析
 
-The `ai-commerce-agent/analysis/` directory keeps reusable Python scripts and
-dependency metadata. It should not contain raw participant data or generated
-reports in Git.
+`ai-commerce-agent/analysis/` には再利用可能な Python スクリプトと依存関係の情報のみを置きます。参加者ごとの raw data や生成レポートは Git に含めません。
 
-Install analysis dependencies from:
+分析用の依存関係は以下でインストールできます。
 
 ```bash
 pip install -r ai-commerce-agent/analysis/requirements.txt
 ```
 
-Place local questionnaire files in `ai-commerce-agent/analysis/` only for local
-work. They are ignored by Git.
+アンケートファイルを使う場合は、ローカル作業用として `ai-commerce-agent/analysis/` に配置してください。これらのファイルは `.gitignore` で除外されています。
 
-## Public Safety Notes
+## 公開時の注意
 
-Before making this repository public, verify that both the current tree and Git
-history do not contain:
+このリポジトリを public にする前に、現在のファイルだけでなく Git 履歴にも以下が残っていないことを確認してください。
 
-- `.env` files or API keys
-- browser profiles such as `.pw-*`
-- `node_modules/` directories
-- raw questionnaire data, exported reports, or participant-level records
-- local proxy/debug scripts
+- `.env` ファイルや API key
+- `.pw-*` などのブラウザプロファイル
+- `node_modules/` ディレクトリ
+- アンケート raw data、出力レポート、参加者単位の記録
+- ローカル proxy/debug 用スクリプト
 
-Current `.gitignore` rules prevent new copies of these files from being added,
-but previously committed sensitive files must be removed from Git history before
-changing repository visibility to public.
+現在の `.gitignore` はこれらが新しく追加されることを防ぎます。ただし、過去にコミットされた sensitive file は、リポジトリを public に変更する前に Git 履歴から削除する必要があります。
 
-## Related Links
+## 関連リンク
 
 - Repository: https://github.com/Mr-Sakasu/Ergonomics
 - Portfolio: https://github.com/Mr-Sakasu/portfolio
