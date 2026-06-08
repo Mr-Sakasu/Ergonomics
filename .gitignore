@@ -1,4 +1,5 @@
 .env
+**/.env
 a.sh
 setup.sh
 node_modules
@@ -34,7 +35,9 @@ Thumbs.db
 
 # Local environment / overrides
 .env.*
+**/.env.*
 !.env.example
+!**/.env.example
 
 # Debug files
 *_debug.html

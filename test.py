@@ -20,7 +20,7 @@ def test_openai_api():
         print("❌ エラー: OPENAI_API_KEYが設定されていません")
         return False
     
-    print(f"✓ APIキーが見つかりました (先頭: {api_key[:7]}...)")
+    print("✓ APIキーが見つかりました")
     
     try:
         # OpenAIクライアントを初期化（タイムアウトを60秒に設定）
