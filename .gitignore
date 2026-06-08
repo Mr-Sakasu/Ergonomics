@@ -23,6 +23,9 @@ out/
 # Coverage and test output
 coverage/
 .nyc_output/
+playwright-report/
+test-results/
+*.tsbuildinfo
 
 # OS / editor files
 .DS_Store
@@ -38,6 +41,19 @@ Thumbs.db
 **/.env.*
 !.env.example
 !**/.env.example
+*.pem
+*.key
+client_secret*.json
+credentials*.json
+token*.json
+oauth*.json
+
+# Local platform state
+.vercel/
+.netlify/
+.cache/
+tmp/
+temp/
 
 # Debug files
 *_debug.html
@@ -93,5 +109,6 @@ ENV/
 *.png
 *.jpg
 *.pdf
+!room/room_layout.png
 !**/extension/**/*.png
 !**/extension/**/*.jpg
