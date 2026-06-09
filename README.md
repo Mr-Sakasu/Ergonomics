@@ -6,9 +6,9 @@
 
 JD.com の商品検索ページ上で、side panel から自然文入力、商品情報取得、多言語クエリ生成を行う流れを確認できます。
 
-<video src="https://portfolio-five-blond-32.vercel.app/videos/projects/jd-global-demo.mp4" controls width="720"></video>
-
-- 動画ファイル: https://portfolio-five-blond-32.vercel.app/videos/projects/jd-global-demo.mp4
+<p align="center">
+  <img src="docs/ai-commerce-demo.gif" alt="AI Commerce Agent demo" width="640">
+</p>
 
 ## 実装した機能
 
