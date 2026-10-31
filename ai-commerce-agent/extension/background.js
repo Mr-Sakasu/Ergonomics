@@ -1,9 +1,7 @@
 // extension/background.js (REPLACE WHOLE FILE)
-// JD-only search via background tab + content script (jd_scraper.js)
-// + AIC_UI_INIT + AIC_LANG_DETECT
-// Fix: Accept ANY input language; if payload.lang is wrong, re-detect locally via chrome.i18n.detectLanguage.
+// Adds: AI_IMAGE (image->features->zh queries) + reuse existing JD scrape pipeline.
 
-console.log("[AIC] BG loaded (JD scrape via content script v4 + chrome detectLanguage)");
+console.log("[AIC] BG loaded (JD scrape via content script + image search v1)");
 
 const API_BASE = "https://ergonomics-mu.vercel.app/api";
 
@@ -11,6 +9,7 @@ const API_BASE = "https://ergonomics-mu.vercel.app/api";
 const CHATBOT_TIMEOUT_MS = 12000;
 const UIINIT_TIMEOUT_MS = 12000;
 const LANGDETECT_TIMEOUT_MS = 9000;
+const IMAGE2QUERY_TIMEOUT_MS = 20000;
 
 const SCRAPE_TIMEOUT_MS = 20000;
 const TOTAL_BUDGET_MS = 30000;
@@ -60,7 +59,7 @@ function normalizeLangTag(lang) {
         .join("-");
 }
 
-// ----- fallback strings (still used if your /ui-init does not provide these keys) -----
+// ----- fallback strings -----
 function uiStringsFallback(userLang = "en-US") {
     const b = langBase(userLang);
     if (b === "ja")
@@ -74,6 +73,8 @@ function uiStringsFallback(userLang = "en-US") {
             openSearch: "JDで検索を開く",
             queryLabel: "検索ワード",
             err: "通信に失敗しました（サーバー/ネットワーク）。",
+            imageAnalyzed: "画像の解析結果",
+            imageSearching: "画像から検索中…",
         };
     if (b === "zh")
         return {
@@ -86,6 +87,8 @@ function uiStringsFallback(userLang = "en-US") {
             openSearch: "打开京东搜索",
             queryLabel: "搜索词",
             err: "网络/服务端请求失败。",
+            imageAnalyzed: "图片识别结果",
+            imageSearching: "正在用图片搜索…",
         };
     return {
         found: "Here are the products I found.",
@@ -97,10 +100,11 @@ function uiStringsFallback(userLang = "en-US") {
         openSearch: "Open JD search",
         queryLabel: "Query",
         err: "Network/server request failed.",
+        imageAnalyzed: "Image analysis",
+        imageSearching: "Searching from image…",
     };
 }
 
-// OPTIONAL: if /ui-init returns extra keys (found/refine/...), we use them.
 const uiTextCache = new Map(); // lang -> pack
 async function getUiTextPack(lang) {
     const L = normalizeLangTag(lang);
@@ -119,9 +123,7 @@ async function getUiTextPack(lang) {
         remote = null;
     }
 
-    // remote may or may not include these keys; merge safely
     const pack = {
-        // existing fields that sidepanel uses (keep them too)
         lang: normalizeLangTag(remote?.lang || L),
         welcome: remote?.welcome || "",
         placeholder: remote?.placeholder || "",
@@ -129,7 +131,6 @@ async function getUiTextPack(lang) {
         no_image: remote?.no_image || "No image",
         searching: remote?.searching || "🔎 Searching…",
 
-        // text fields used in background
         found: remote?.found || fallback.found,
         notFound: remote?.notFound || fallback.notFound,
         blocked: remote?.blocked || fallback.blocked,
@@ -139,13 +140,16 @@ async function getUiTextPack(lang) {
         openSearch: remote?.openSearch || fallback.openSearch,
         queryLabel: remote?.queryLabel || fallback.queryLabel,
         err: remote?.err || fallback.err,
+
+        imageAnalyzed: remote?.imageAnalyzed || fallback.imageAnalyzed,
+        imageSearching: remote?.imageSearching || fallback.imageSearching,
     };
 
     uiTextCache.set(pack.lang, pack);
     return pack;
 }
 
-// Local language detection (ANY language) using chrome.i18n.detectLanguage
+// Local language detection using chrome.i18n.detectLanguage
 function detectLangByChrome(text) {
     return new Promise((resolve) => {
         try {
@@ -169,7 +173,6 @@ function detectLangByChrome(text) {
 function buildJdSearchUrl(q) {
     return `https://search.jd.com/Search?keyword=${encodeURIComponent(q)}&enc=utf-8`;
 }
-
 function buildJdSearchUrlWithJob(q, jobId) {
     const u = new URL("https://search.jd.com/Search");
     u.searchParams.set("keyword", q);
@@ -213,9 +216,7 @@ function pTabsQueryActive() {
     });
 }
 
-// ---------------------------
 // Ensure jd_scraper.js is registered (safety net)
-// ---------------------------
 async function ensureContentScriptRegistered() {
     try {
         const regs = await chrome.scripting.getRegisteredContentScripts();
@@ -257,65 +258,17 @@ function finishScrape(jobId, payload) {
 
     pendingScrapes.delete(jobId);
 
-    try {
-        clearTimeout(p.timer);
-    } catch (_) { }
-    try {
-        chrome.tabs.onUpdated.removeListener(p.onUpdated);
-    } catch (_) { }
+    try { clearTimeout(p.timer); } catch (_) { }
+    try { chrome.tabs.onUpdated.removeListener(p.onUpdated); } catch (_) { }
 
     if (p.tabId != null) {
-        try {
-            chrome.tabs.remove(p.tabId);
-        } catch (_) { }
+        try { chrome.tabs.remove(p.tabId); } catch (_) { }
     }
 
-    try {
-        p.resolve(payload);
-    } catch (_) { }
+    try { p.resolve(payload); } catch (_) { }
 }
 
-// NOTE: This listener serves TWO purposes:
-//  1) Receive JD_SCRAPE_RESULT from jd_scraper.js (content script)
-//  2) Serve sidepanel RPC via sendMessage (MV3-friendly; SW can sleep/wake)
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-    // (1) content script -> background
-    if (msg?.type === "JD_SCRAPE_RESULT") {
-        const jobId = String(msg.jobId || "");
-        if (!jobId) return;
-
-        const payload = msg.payload || {};
-        console.log("[AIC] JD_SCRAPE_RESULT received", { jobId, ok: payload?.ok, n: payload?.items?.length });
-
-        finishScrape(jobId, payload);
-        return;
-    }
-
-    // (2) sidepanel -> background (single-shot RPC)
-    const type = msg?.type;
-    const payload = msg?.payload || {};
-    if (!type) return;
-
-    (async () => {
-        try {
-            if (type === "AIC_UI_INIT") return sendResponse(await handleUiInit(payload));
-            if (type === "AIC_LANG_DETECT") return sendResponse(await handleLangDetect(payload));
-            if (type === "AI_CHAT") return sendResponse(await handleAiChat(payload));
-            if (type === "AIC_STT") return sendResponse(await handleStt(payload));
-
-            sendResponse({ ok: false, error: "unknown_type" });
-        } catch (e) {
-            sendResponse({ ok: false, error: String(e?.message || e) });
-        }
-    })();
-
-    // keep the message channel open for async sendResponse
-    return true;
-});
-
-// ---------------------------
-// Price fill (optional)
-// ---------------------------
+// ---- Price fill (optional) ----
 async function fetchJdPrices(skus = []) {
     const list = (skus || []).filter(Boolean).slice(0, 20);
     const map = new Map();
@@ -343,9 +296,7 @@ async function fetchJdPrices(skus = []) {
     return map;
 }
 
-// ---------------------------
-// Scrape JD by background tab + content script
-// ---------------------------
+// ---- Scrape JD by background tab + content script ----
 async function scrapeJdByTab(zhQuery, timeoutMs = SCRAPE_TIMEOUT_MS) {
     const jobId = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
     const url = buildJdSearchUrlWithJob(zhQuery, jobId);
@@ -448,7 +399,7 @@ function pickZhCandidates(serverData) {
         .map((it) => String(it?.q || "").trim())
         .filter(Boolean);
 
-    const keywordZh = String(serverData?.keyword_zh || "").trim();
+    const keywordZh = String(serverData?.keyword_zh || serverData?.query_zh || "").trim();
     const merged = [...zh, keywordZh].filter(Boolean);
 
     const out = [];
@@ -467,8 +418,29 @@ function pickDisplayQuery(serverData, fallbackUserQuery) {
     return normalizeDisplayQuery(dq || fallbackUserQuery || "");
 }
 
+function formatFeatures(serverData) {
+    const f = serverData?.features ?? serverData?.attributes ?? serverData?.tags ?? null;
+    if (!f) return "";
+    if (Array.isArray(f)) {
+        const xs = f.map((x) => String(x || "").trim()).filter(Boolean).slice(0, 12);
+        return xs.length ? xs.join(" / ") : "";
+    }
+    if (typeof f === "object") {
+        const lines = [];
+        for (const [k, v] of Object.entries(f)) {
+            const kk = String(k || "").trim();
+            const vv = String(v || "").trim();
+            if (kk && vv) lines.push(`${kk}: ${vv}`);
+            if (lines.length >= 12) break;
+        }
+        return lines.join("\n");
+    }
+    const s = String(f || "").trim();
+    return s;
+}
+
 // ---------------------------
-// Main handler: AI_CHAT
+// Main handler: AI_CHAT (text)
 // ---------------------------
 async function handleAiChat(payload = {}) {
     const t0 = Date.now();
@@ -480,7 +452,6 @@ async function handleAiChat(payload = {}) {
     let replyLang = normalizeLangTag(payload.lang || "en-US");
     const chromeDetected = await detectLangByChrome(userQuery);
     if (chromeDetected && langBase(chromeDetected) !== langBase(replyLang)) {
-        // if sidepanel was wrong, fix here
         replyLang = chromeDetected;
     }
 
@@ -512,8 +483,147 @@ async function handleAiChat(payload = {}) {
     console.log("[AIC] displayQuery", displayQuery);
     console.log("[AIC] zhCandidates", zhCandidates);
 
-    // 2) scraping
-    for (const zhQ of zhCandidates.slice(0, MAX_QUERY_TRIES)) {
+    return await runScrapeWithCandidates({
+        ui,
+        replyLang,
+        displayQuery,
+        zhCandidates,
+    }, t0);
+}
+
+// ---------------------------
+// NEW: AI_IMAGE (image -> server vision -> zh candidates -> scrape)
+// ---------------------------
+async function handleAiImage(payload = {}) {
+    const t0 = Date.now();
+
+    let replyLang = normalizeLangTag(payload.lang || "en-US");
+    const ui = await getUiTextPack(replyLang);
+
+    const imageBase64 = String(payload.imageBase64 || "");
+    const mimeType = String(payload.mimeType || "image/jpeg");
+    const provider = String(payload.provider || "jd");
+
+    if (!imageBase64) {
+        return {
+            ok: true,
+            data: {
+                ok: true,
+                reply_lang: replyLang,
+                messages: [{ role: "assistant", type: "text", content: `${ui.err}\n(imageBase64 missing)` }],
+            },
+        };
+    }
+
+    // 1) Ask server to extract features and produce zh queries
+    let serverData = null;
+
+    // Try dedicated endpoint first: /image2query
+    try {
+        const r = await fetchWithTimeout(
+            `${API_BASE}/image2query`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    lang: replyLang,
+                    provider,
+                    imageBase64,
+                    mimeType,
+                    width: payload.width,
+                    height: payload.height,
+                }),
+            },
+            IMAGE2QUERY_TIMEOUT_MS
+        );
+
+        if (r.ok) {
+            serverData = await r.json().catch(() => null);
+        } else {
+            serverData = null;
+        }
+    } catch (_) {
+        serverData = null;
+    }
+
+    // Fallback: if your server instead supports image inside /chatbot
+    if (!serverData) {
+        try {
+            const r = await fetchWithTimeout(
+                `${API_BASE}/chatbot`,
+                {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        lang: replyLang,
+                        provider,
+                        clientScrape: true,
+                        mode: "image",
+                        imageBase64,
+                        mimeType,
+                    }),
+                },
+                IMAGE2QUERY_TIMEOUT_MS
+            );
+            if (r.ok) serverData = await r.json().catch(() => null);
+        } catch (_) {
+            serverData = null;
+        }
+    }
+
+    if (!serverData) {
+        return {
+            ok: true,
+            data: {
+                ok: true,
+                reply_lang: replyLang,
+                messages: [{ role: "assistant", type: "text", content: ui.err }],
+            },
+        };
+    }
+
+    const featuresText = formatFeatures(serverData);
+    const displayQuery = pickDisplayQuery(serverData, "image");
+    const zhCandidates = pickZhCandidates(serverData);
+
+    if (!zhCandidates.length) {
+        return {
+            ok: true,
+            data: {
+                ok: true,
+                reply_lang: replyLang,
+                messages: [
+                    { role: "assistant", type: "text", content: `${ui.imageAnalyzed}\n${featuresText || "(no features)"}` },
+                    { role: "assistant", type: "text", content: ui.notFound },
+                ],
+            },
+        };
+    }
+
+    // 2) Scrape like text flow
+    const headMsgs = [];
+    if (featuresText) {
+        headMsgs.push({ role: "assistant", type: "text", content: `${ui.imageAnalyzed}\n${featuresText}` });
+    }
+    // show query label too (this is the "display query")
+    headMsgs.push({ role: "assistant", type: "text", content: `(${ui.queryLabel}: ${displayQuery})` });
+
+    const result = await runScrapeWithCandidates({
+        ui,
+        replyLang,
+        displayQuery,
+        zhCandidates,
+        headMsgs,
+    }, t0);
+
+    return result;
+}
+
+// ---------------------------
+// Shared: scrape loop + response formatting
+// ---------------------------
+async function runScrapeWithCandidates({ ui, replyLang, displayQuery, zhCandidates, headMsgs = [] }, t0) {
+    for (const zhQ of (zhCandidates || []).slice(0, MAX_QUERY_TRIES)) {
         if (Date.now() - t0 > TOTAL_BUDGET_MS) break;
 
         console.log("[AIC] scrape try", { zhQ });
@@ -547,8 +657,8 @@ async function handleAiChat(payload = {}) {
                     ok: true,
                     reply_lang: replyLang,
                     messages: [
+                        ...headMsgs,
                         { role: "assistant", type: "text", content: ui.blocked },
-                        { role: "assistant", type: "text", content: `(${ui.queryLabel}: ${displayQuery})` },
                         { role: "assistant", type: "products", items: [openSearchItem] },
                     ],
                 },
@@ -562,8 +672,8 @@ async function handleAiChat(payload = {}) {
                     ok: true,
                     reply_lang: replyLang,
                     messages: [
+                        ...headMsgs,
                         { role: "assistant", type: "text", content: ui.redirected },
-                        { role: "assistant", type: "text", content: `(${ui.queryLabel}: ${displayQuery})` },
                         { role: "assistant", type: "products", items: [openSearchItem] },
                     ],
                 },
@@ -577,8 +687,8 @@ async function handleAiChat(payload = {}) {
                     ok: true,
                     reply_lang: replyLang,
                     messages: [
+                        ...headMsgs,
                         { role: "assistant", type: "text", content: ui.timeout },
-                        { role: "assistant", type: "text", content: `(${ui.queryLabel}: ${displayQuery})` },
                         { role: "assistant", type: "products", items: [openSearchItem] },
                     ],
                 },
@@ -586,7 +696,6 @@ async function handleAiChat(payload = {}) {
         }
 
         if (r?.ok && Array.isArray(r.items) && r.items.length > 0) {
-            // 5 items only
             const items = r.items.slice(0, 5).map((it) => ({
                 title: String(it.title || ""),
                 description: "",
@@ -602,7 +711,8 @@ async function handleAiChat(payload = {}) {
                     ok: true,
                     reply_lang: replyLang,
                     messages: [
-                        { role: "assistant", type: "text", content: `${ui.found}\n(${ui.queryLabel}: ${displayQuery})` },
+                        ...headMsgs,
+                        { role: "assistant", type: "text", content: ui.found },
                         { role: "assistant", type: "products", items },
                         { role: "assistant", type: "text", content: ui.refine },
                     ],
@@ -611,16 +721,15 @@ async function handleAiChat(payload = {}) {
         }
     }
 
-    // Not found
-    const openQ = zhCandidates[0] || userQuery;
+    const openQ = (zhCandidates && zhCandidates[0]) ? zhCandidates[0] : (displayQuery || "");
     return {
         ok: true,
         data: {
             ok: true,
             reply_lang: replyLang,
             messages: [
-                { role: "assistant", type: "text", content: serverData ? ui.notFound : ui.err },
-                { role: "assistant", type: "text", content: `(${ui.queryLabel}: ${displayQuery})` },
+                ...headMsgs,
+                { role: "assistant", type: "text", content: ui.notFound },
                 { role: "assistant", type: "products", items: [{ title: ui.openSearch, url: buildJdSearchUrl(openQ), price: "", image: "", source: "JD" }] },
                 { role: "assistant", type: "text", content: ui.refine },
             ],
@@ -645,13 +754,47 @@ async function handleStt(payload = {}) {
     }
 }
 
-// ===== Port messaging =====
-function safePortPost(port, msg) {
-    try {
-        port.postMessage(msg);
-    } catch (e) {
-        console.warn("[AIC] port.postMessage failed", e);
+// NOTE: Listener serves:
+//  1) Receive JD_SCRAPE_RESULT from jd_scraper.js
+//  2) Serve sidepanel RPC via sendMessage
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    // (1) content script -> background
+    if (msg?.type === "JD_SCRAPE_RESULT") {
+        const jobId = String(msg.jobId || "");
+        if (!jobId) return;
+
+        const payload = msg.payload || {};
+        console.log("[AIC] JD_SCRAPE_RESULT received", { jobId, ok: payload?.ok, n: payload?.items?.length });
+
+        finishScrape(jobId, payload);
+        return;
     }
+
+    // (2) sidepanel -> background (single-shot RPC)
+    const type = msg?.type;
+    const payload = msg?.payload || {};
+    if (!type) return;
+
+    (async () => {
+        try {
+            if (type === "AIC_UI_INIT") return sendResponse(await handleUiInit(payload));
+            if (type === "AIC_LANG_DETECT") return sendResponse(await handleLangDetect(payload));
+            if (type === "AI_CHAT") return sendResponse(await handleAiChat(payload));
+            if (type === "AI_IMAGE") return sendResponse(await handleAiImage(payload));
+            if (type === "AIC_STT") return sendResponse(await handleStt(payload));
+
+            sendResponse({ ok: false, error: "unknown_type" });
+        } catch (e) {
+            sendResponse({ ok: false, error: String(e?.message || e) });
+        }
+    })();
+
+    return true; // keep channel open
+});
+
+// ===== Port messaging (keep compatibility) =====
+function safePortPost(port, msg) {
+    try { port.postMessage(msg); } catch (e) { console.warn("[AIC] port.postMessage failed", e); }
 }
 
 chrome.runtime.onConnect.addListener((port) => {
@@ -678,6 +821,11 @@ chrome.runtime.onConnect.addListener((port) => {
             if (type === "AI_CHAT") {
                 const out = await handleAiChat(payload);
                 safePortPost(port, { type: "AI_CHAT_RESULT", jobId, out });
+                return;
+            }
+            if (type === "AI_IMAGE") {
+                const out = await handleAiImage(payload);
+                safePortPost(port, { type: "AI_IMAGE_RESULT", jobId, out });
                 return;
             }
             if (type === "AIC_STT") {

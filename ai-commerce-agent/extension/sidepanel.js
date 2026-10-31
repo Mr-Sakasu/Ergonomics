@@ -1,7 +1,6 @@
 // extension/sidepanel.js (REPLACE WHOLE FILE)
-// Fix: Ensure DOM is ready before binding events (prevents send button "no response").
-// Fix: Robust language detect for ANY language (chrome.i18n.detectLanguage first + timeout, then remote fallback).
-// Fix: UI pack cache key bumped to v3.
+// Adds: sidepanel image input -> background vision -> zh query -> scrape JD
+// Keeps: existing text chat + voice input
 
 console.log("[AIC] sidepanel.js loaded");
 
@@ -17,16 +16,26 @@ function addBubble(text, who = "bot") {
     return div;
 }
 
-// ===== Background通信 (MV3 Service Worker 対応) =====
-//
-// MV3のService Workerは「何もしていないと勝手に停止」します。
-// Port(connect) を張りっぱなしにすると、停止時に port が切れて
-// 「Connection to background process was lost」になりがちです。
-//
-// そこで sidepanel -> background は sendMessage(単発RPC) に変更します。
-// sendMessage は必要な時に Service Worker を自動で起動してくれるので、
-// 放置しても壊れにくいです。
+function addImageBubble(objectUrl, who = "me") {
+    if (!el?.msgs) return null;
+    const wrap = document.createElement("div");
+    wrap.className = `bubble ${who === "me" ? "me" : "bot"}`;
 
+    const box = document.createElement("div");
+    box.className = "imgbox";
+
+    const img = document.createElement("img");
+    img.src = objectUrl;
+    img.alt = "image";
+    box.appendChild(img);
+
+    wrap.appendChild(box);
+    el.msgs.appendChild(wrap);
+    el.msgs.scrollTop = el.msgs.scrollHeight;
+    return wrap;
+}
+
+// ===== Background通信 (MV3 Service Worker friendly) =====
 function requestBG(type, payload, timeoutMs = 120000) {
     return new Promise((resolve, reject) => {
         let done = false;
@@ -78,7 +87,7 @@ function normalizeLangTag(lang) {
         if (b === "ja") return "ja-JP";
         if (b === "zh") return "zh-CN";
         if (b === "ko") return "ko-KR";
-        return b; // fr/de/es/... keep as 2-letter
+        return b;
     }
 
     const parts = s.split(/[-_]/);
@@ -155,9 +164,7 @@ async function ensureUiPack(lang, { showWelcome = false, setPlaceholder = true }
         uiCache.set(pack.lang, pack);
         ui = pack;
 
-        try {
-            localStorage.setItem(`aic_ui_pack_v3_${pack.lang}`, JSON.stringify(pack));
-        } catch (_) { }
+        try { localStorage.setItem(`aic_ui_pack_v3_${pack.lang}`, JSON.stringify(pack)); } catch (_) { }
 
         if (setPlaceholder && pack.placeholder && el?.inp) el.inp.placeholder = pack.placeholder;
         if (showWelcome && pack.welcome) addBubble(pack.welcome, "bot");
@@ -282,7 +289,69 @@ function addProducts(items = []) {
     el.msgs.scrollTop = el.msgs.scrollHeight;
 }
 
-// ===== Main send =====
+// ===== Image helpers (resize + base64) =====
+function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(String(fr.result).split(",")[1] || "");
+        fr.onerror = reject;
+        fr.readAsDataURL(blob);
+    });
+}
+
+async function imageFileToJpegBase64(file, { maxSide = 768, quality = 0.86 } = {}) {
+    const url = URL.createObjectURL(file);
+    try {
+        let imgW = 0, imgH = 0;
+        let bitmap = null;
+
+        // prefer createImageBitmap (faster)
+        try {
+            bitmap = await createImageBitmap(file);
+            imgW = bitmap.width;
+            imgH = bitmap.height;
+        } catch (_) {
+            bitmap = null;
+        }
+
+        let drawSource = bitmap;
+        if (!drawSource) {
+            const img = new Image();
+            img.src = url;
+            await new Promise((res, rej) => {
+                img.onload = () => res(true);
+                img.onerror = rej;
+            });
+            imgW = img.naturalWidth || img.width;
+            imgH = img.naturalHeight || img.height;
+            drawSource = img;
+        }
+
+        const scale = Math.min(1, maxSide / Math.max(imgW, imgH));
+        const w = Math.max(1, Math.round(imgW * scale));
+        const h = Math.max(1, Math.round(imgH * scale));
+
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+
+        const ctx = canvas.getContext("2d", { alpha: false });
+        ctx.drawImage(drawSource, 0, 0, w, h);
+
+        const jpegBlob = await new Promise((resolve) => {
+            canvas.toBlob((b) => resolve(b), "image/jpeg", quality);
+        });
+
+        if (!jpegBlob) throw new Error("toBlob_failed");
+
+        const base64 = await blobToBase64(jpegBlob);
+        return { base64, mimeType: "image/jpeg", width: w, height: h };
+    } finally {
+        try { URL.revokeObjectURL(url); } catch (_) { }
+    }
+}
+
+// ===== Main send (text) =====
 async function sendChat(text) {
     const q = String(text || "").trim();
     if (!q) return;
@@ -298,7 +367,7 @@ async function sendChat(text) {
     try {
         const out = await requestBG("AI_CHAT", {
             text: q,
-            lang: detectedLang, // reply language follows user input language
+            lang: detectedLang,
             provider: "jd",
         });
 
@@ -326,7 +395,61 @@ async function sendChat(text) {
     }
 }
 
-// ===== Voice (same as yours) =====
+// ===== Image search =====
+async function sendImageFile(file) {
+    if (!file) return;
+
+    // preview in chat (object URL)
+    const previewUrl = URL.createObjectURL(file);
+    addImageBubble(previewUrl, "me");
+
+    // The response language: current UI lang (or browser lang)
+    const replyLang = normalizeLangTag(ui?.lang || getDefaultUiLang());
+
+    const loading = addBubble("🖼️ Analyzing image…", "bot");
+
+    try {
+        // resize+compress so messages are small
+        const { base64, mimeType, width, height } = await imageFileToJpegBase64(file, { maxSide: 768, quality: 0.86 });
+
+        const out = await requestBG("AI_IMAGE", {
+            imageBase64: base64,
+            mimeType,
+            width,
+            height,
+            lang: replyLang,
+            provider: "jd",
+        }, 180000);
+
+        if (loading?.remove) loading.remove();
+
+        if (!out || out.ok === false || !out.data) {
+            addBubble(`No response from server/extension.\n${out?.error || ""}`, "bot");
+            return;
+        }
+
+        const data = out.data;
+        const msgs = Array.isArray(data.messages) ? data.messages : [];
+        if (!msgs.length) {
+            addBubble("Empty response (no messages).", "bot");
+            return;
+        }
+
+        for (const m of msgs) {
+            if (m.type === "text") addBubble(m.content || "", "bot");
+            if (m.type === "products") addProducts(Array.isArray(m.items) ? m.items : []);
+        }
+    } catch (e) {
+        if (loading?.remove) loading.remove();
+        addBubble(`Image error:\n${String(e?.message || e)}`, "bot");
+    } finally {
+        // keep preview shown; just revoke the object url (img keeps its decoded bitmap)
+        try { URL.revokeObjectURL(previewUrl); } catch (_) { }
+        if (el?.file) el.file.value = ""; // allow picking same file again
+    }
+}
+
+// ===== Voice (unchanged) =====
 const voice = { recording: false, stream: null, recorder: null, chunks: [], timer: null };
 
 function setMicUI(on) {
@@ -353,15 +476,6 @@ function cleanupRecording() {
     }
     voice.recorder = null;
     voice.chunks = [];
-}
-
-function blobToBase64(blob) {
-    return new Promise((resolve, reject) => {
-        const fr = new FileReader();
-        fr.onload = () => resolve(String(fr.result).split(",")[1] || "");
-        fr.onerror = reject;
-        fr.readAsDataURL(blob);
-    });
 }
 
 async function startRecording() {
@@ -440,13 +554,13 @@ function init() {
         inp: document.getElementById("inp"),
         send: document.getElementById("send"),
         mic: document.getElementById("mic"),
+        img: document.getElementById("img"),
+        file: document.getElementById("file"),
     };
 
-    // If IDs mismatch, show a visible error instead of silently dying.
     const missing = Object.entries(el).filter(([, v]) => !v).map(([k]) => k);
     if (missing.length) {
         console.error("[AIC] sidepanel missing elements:", missing);
-        // try to show in UI if possible
         if (el.msgs) addBubble(`⚠️ UI element not found: ${missing.join(", ")}\n(sidepanel.htmlのidを確認してください)`, "bot");
         return;
     }
@@ -469,6 +583,16 @@ function init() {
     el.mic.addEventListener("click", () => {
         if (voice.recording) stopRecording();
         else startRecording();
+    });
+
+    // NEW: image button
+    el.img.addEventListener("click", () => {
+        el.file.click();
+    });
+    el.file.addEventListener("change", async () => {
+        const f = el.file.files?.[0];
+        if (!f) return;
+        await sendImageFile(f);
     });
 
     (async () => {

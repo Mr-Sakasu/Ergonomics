@@ -209,20 +209,40 @@
             color: var(--muted);
             font-size: 12px;
         }
+
+        /* image bubble */
+        .imgbox {
+            width: 180px;
+            max-width: 100%;
+            border-radius: 10px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            background: rgba(255, 255, 255, .02);
+        }
+
+        .imgbox img {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
     </style>
 </head>
 
 <body>
     <div class="wrap">
         <header>
-            <div class="title"><span class="badge">AI</span>AI Commerce Agent <span class="hint"></span>
-            </div>
+            <div class="title"><span class="badge">AI</span>AI Commerce Agent <span class="hint"></span></div>
         </header>
 
         <main id="msgs"></main>
 
         <div class="row">
             <textarea id="inp" placeholder="例）拉面 / ノートPC 4万円 軽い / iPhone 15 ケース"></textarea>
+
+            <!-- NEW: image button + hidden file input -->
+            <button id="img" title="画像から検索">📷</button>
+            <input id="file" type="file" accept="image/*" style="display:none" />
+
             <button id="mic" title="音声入力">🎤</button>
             <button id="send" class="primary" title="送信">→</button>
         </div>
